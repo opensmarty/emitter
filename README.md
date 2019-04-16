@@ -13,17 +13,26 @@ Emitter is a real-time communication service for connecting online devices. Infr
 
 Emitter can be used for online gaming and mobile apps by satisfying the requirements for low latency, binary messaging and high throughput. It can also be used for the real-time web application such as dashboards or visual analytics or chat systems. Moreover, Emitter is perfect for the internet of things and allows sensors to be controlled and data gathered and analyzed.
 
-## Video Tutorials & Demos
+## Tutorials & Demos
 
-![Emitter Youtube](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/logo/youtube.png?v=1) Playlist: https://www.youtube.com/playlist?list=PLhFXrq-2gEb0ygxR477GJLngjYu-FcSVq
+The following [set of videos](https://www.youtube.com/playlist?list=PLhFXrq-2gEb0ygxR477GJLngjYu-FcSVq) demonstrates various features of Emitter broker in action.
 
-[![Emitter at Fosdem](https://img.youtube.com/vi/M8VhWckhZoM/1.jpg)](https://www.youtube.com/watch?v=M8VhWckhZoM)
-[![Local Emitter Cluster](https://img.youtube.com/vi/byq70fHeH-I/1.jpg)](https://www.youtube.com/watch?v=byq70fHeH-I)
-[![PubSub in Go](https://img.youtube.com/vi/ggFqj5P4W38/1.jpg)](https://www.youtube.com/watch?v=ggFqj5P4W38)
-[![Message Storage](https://img.youtube.com/vi/14cIxnR0Akc/1.jpg)](https://www.youtube.com/watch?v=14cIxnR0Akc)
-[![Using MQTTSpy](https://img.youtube.com/vi/OcdL_454XT0/1.jpg)](https://www.youtube.com/watch?v=OcdL_454XT0)
-[![ISS Tracking](https://img.youtube.com/vi/F47LTbl2Bjw/1.jpg)](https://www.youtube.com/watch?v=F47LTbl2Bjw)
-[![Self-Signed TLS](https://img.youtube.com/vi/NRejmavZuAI/1.jpg)](https://www.youtube.com/watch?v=NRejmavZuAI)
+[![FOSDEM 2018](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-fosdem2017.png)](https://www.youtube.com/watch?v=M8VhWckhZoM)
+[![FOSDEM 2019](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-fosdem2019.png)](https://www.youtube.com/watch?v=GZDgN8XHy7g)
+[![PubSub in Go](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-golang.png)](https://www.youtube.com/watch?v=ggFqj5P4W38)
+[![Message Storage](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-storage.png)](https://www.youtube.com/watch?v=14cIxnR0Akc)
+[![Using MQTTSpy](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-mqttspy.png)](https://www.youtube.com/watch?v=OcdL_454XT0)
+[![ISS Tracking](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-iss.png)](https://www.youtube.com/watch?v=F47LTbl2Bjw)
+[![Self-Signed TLS](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-tls.png)](https://www.youtube.com/watch?v=NRejmavZuAI)
+[![Monitor with eTop](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-etop.png)](https://www.youtube.com/watch?v=EOlOk9JPSyA)
+[![StatsD and DataDog](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-datadog.png)](https://www.youtube.com/watch?v=bi77Wb7cqEc)
+[![Links & Private Links](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-links.png)](https://www.youtube.com/watch?v=_FgKiUlEb_s)
+
+## How to Deploy
+[![Local Emitter Cluster](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-win.png)](https://www.youtube.com/watch?v=byq70fHeH-I)
+[![K8s and DigitalOcean](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-k8s.png)](https://www.youtube.com/watch?v=CsrKiNjZ2Ew)
+[![K8s and Google Cloud](http://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-gcloud.png)](https://www.youtube.com/watch?v=IL7WEH_2IOo)
+[![K8s and Azure](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-azure.png)](https://www.youtube.com/watch?v=4ixnxreKsOg)
 
 ## Quick Start
 
@@ -125,6 +134,7 @@ The structure of the configuration is described below:
 |---|---|---|
 | `license` | `EMITTER_LICENSE` | The license file to use for the broker. This contains the encryption key. |
 | `listen` | `EMITTER_LISTEN` | The API address used for TCP & Websocket communication, in `IP:PORT` format (e.g: `:8080`). |
+| `limit.messageSize` | `EMITTER_LIMIT_MESSAGESIZE` | Maximum message size. Default is 64KB.
 | `tls.listen` | `EMITTER_TLS_LISTEN` |The API address used for Secure TCP & Websocket communication, in `IP:PORT` format (e.g: `:443`).  |
 | `tls.host` | `EMITTER_TLS_HOST` | The hostname to whitelist for the certificate.  |
 | `tls.email` | `EMITTER_TLS_EMAIL` |The email account to use for autocert. |
@@ -135,6 +145,8 @@ The structure of the configuration is described below:
 | `cluster.advertise` | `EMITTER_CLUSTER_ADVERTISE` | The address and port to advertise inter-node communication network. This is used for nat traversal. |
 | `cluster.seed` | `EMITTER_CLUSTER_SEED` | The seed address (or a domain name) for cluster join. |
 | `cluster.passphrase` | `EMITTER_CLUSTER_PASSPHRASE` | Passphrase is used to initialize the primary encryption key in a keyring. This key is used for encrypting all the gossip messages (message-level encryption). |
+| `storage.provider` | `EMITTER_STORAGE_PROVIDER` |  This property represents the publishers publish message storage mode. there are two kinds of can use, they are respectively `inmemory` and `ssd`, defaults to the former. |
+| `storage.config.dir` | `EMITTER_STORAGE_CONFIG` |  If the storage mode is `ssd`, this property indicates where the messages are stored (emitter server nodes are not allowed to use the same directory within the same machine)
 
 
 

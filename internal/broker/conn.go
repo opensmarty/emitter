@@ -44,6 +44,7 @@ type Conn struct {
 	service  *Service          // The service for this connection.
 	subs     *message.Counters // The subscriptions for this connection.
 	measurer stats.Measurer    // The measurer to use for monitoring.
+	links    map[string]string // The map of all pre-authorized links.
 }
 
 // NewConn creates a new connection.
@@ -55,6 +56,7 @@ func (s *Service) newConn(t net.Conn) *Conn {
 		socket:   t,
 		subs:     message.NewCounters(),
 		measurer: s.measurer,
+		links:    map[string]string{},
 	}
 
 	// Generate a globally unique id as well
@@ -101,13 +103,13 @@ func (c *Conn) track(contract contract.Contract) {
 func (c *Conn) Process() error {
 	defer c.Close()
 	reader := bufio.NewReaderSize(c.socket, 65536)
-
+	maxMessageSize := c.service.Config.MaxMessageBytes()
 	for {
 		// Set read/write deadlines so we can close dangling connections
 		c.socket.SetDeadline(time.Now().Add(time.Second * 120))
 
 		// Decode an incoming MQTT packet
-		msg, err := mqtt.DecodePacket(reader)
+		msg, err := mqtt.DecodePacket(reader, maxMessageSize)
 		if err != nil {
 			return err
 		}
@@ -119,17 +121,6 @@ func (c *Conn) Process() error {
 	}
 }
 
-// notifyError notifies the connection about an error
-func (c *Conn) notifyError(err *Error, messageID uint16) {
-	err.ID = int(messageID)
-	if b, err := json.Marshal(err); err == nil {
-		c.Send(&message.Message{
-			Channel: []byte("emitter/error/"),
-			Payload: b,
-		})
-	}
-}
-
 // onReceive handles an MQTT receive.
 func (c *Conn) onReceive(msg mqtt.Message) error {
 	defer c.MeasureElapsed("rcv."+msg.String(), time.Now())
@@ -137,11 +128,13 @@ func (c *Conn) onReceive(msg mqtt.Message) error {
 
 	// We got an attempt to connect to MQTT.
 	case mqtt.TypeOfConnect:
-		packet := msg.(*mqtt.Connect)
-		c.username = string(packet.Username)
+		var result uint8
+		if !c.onConnect(msg.(*mqtt.Connect)) {
+			result = 0x05 // Unauthorized
+		}
 
 		// Write the ack
-		ack := mqtt.Connack{ReturnCode: 0x00}
+		ack := mqtt.Connack{ReturnCode: result}
 		if _, err := ack.EncodeTo(c.socket); err != nil {
 			return err
 		}
@@ -200,8 +193,7 @@ func (c *Conn) onReceive(msg mqtt.Message) error {
 
 	case mqtt.TypeOfPublish:
 		packet := msg.(*mqtt.Publish)
-
-		if err := c.onPublish(packet.Topic, packet.Payload); err != nil {
+		if err := c.onPublish(packet); err != nil {
 			logging.LogError("conn", "publish received", err)
 			c.notifyError(err, packet.MessageID)
 		}
@@ -222,16 +214,37 @@ func (c *Conn) onReceive(msg mqtt.Message) error {
 func (c *Conn) Send(m *message.Message) (err error) {
 	defer c.MeasureElapsed("send.pub", time.Now())
 	packet := mqtt.Publish{
-		Header: &mqtt.StaticHeader{
-			QOS: 0, // TODO when we'll support more QoS
-		},
-		MessageID: 0,         // TODO
-		Topic:     m.Channel, // The channel for this message.
-		Payload:   m.Payload, // The payload for this message.
+		Header:  &mqtt.StaticHeader{QOS: 0},
+		Topic:   m.Channel, // The channel for this message.
+		Payload: m.Payload, // The payload for this message.
 	}
 
 	// Acknowledge the publication
 	_, err = packet.EncodeTo(c.socket)
+	return
+}
+
+// notifyError notifies the connection about an error
+func (c *Conn) notifyError(err *Error, requestID uint16) {
+	c.sendResponse("emitter/error/", err, requestID)
+}
+
+func (c *Conn) sendResponse(topic string, resp response, requestID uint16) {
+	switch m := resp.(type) {
+	case *Error:
+		errCopy := *m // Copy the value
+		errCopy.ForRequest(requestID)
+		resp = &errCopy
+	default:
+		m.ForRequest(requestID)
+	}
+
+	if b, err := json.Marshal(resp); err == nil {
+		c.Send(&message.Message{
+			Channel: []byte(topic),
+			Payload: b,
+		})
+	}
 	return
 }
 

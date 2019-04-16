@@ -45,6 +45,7 @@ func TestParseChannel(t *testing.T) {
 		{k: "emitter", ch: "b/+/", t: ChannelWildcard},
 		{k: "0TJnt4yZPL73zt35h1UTIFsYBLetyD_g", ch: "emitter/", o: []string{"test=true", "something=7"}, t: ChannelStatic},
 		{k: "emitter", ch: "a/b/c/d/", o: []string{"test=true", "something=7"}, t: ChannelStatic},
+		{k: "emitter", ch: "a/b/c/d/", o: []string{"req=13", "something=7"}, t: ChannelStatic},
 
 		// Invalid channels
 		{t: ChannelInvalid},
@@ -108,6 +109,26 @@ func TestParseChannel(t *testing.T) {
 				assert.Equal(t, true, found, "unable to find key = "+target)
 			}
 		}
+	}
+}
+
+func TestGetChannelExclude(t *testing.T) {
+	tests := []struct {
+		channel string
+		ok      bool
+	}{
+		{channel: "emitter/a/?me=0", ok: true},
+		{channel: "emitter/a/?me=12000000", ok: false},
+		{channel: "emitter/a/?me=1200a", ok: false},
+		{channel: "emitter/a/?me=-1", ok: false},
+		{channel: "emitter/a/", ok: false},
+	}
+
+	for _, tc := range tests {
+		channel := ParseChannel([]byte(tc.channel))
+		excludeMe := channel.Exclude()
+
+		assert.Equal(t, excludeMe, tc.ok)
 	}
 }
 
@@ -186,6 +207,7 @@ func TestGetChannelTarget(t *testing.T) {
 		target  uint32
 	}{
 		{channel: "emitter/a/?ttl=42&abc=9", target: 0xc103eab3},
+		{channel: "emitter/$share/a/b/c/", target: 1480642916},
 	}
 
 	for _, tc := range tests {
@@ -193,5 +215,36 @@ func TestGetChannelTarget(t *testing.T) {
 		target := channel.Target()
 
 		assert.Equal(t, tc.target, target)
+	}
+}
+
+func TestMakeChannel(t *testing.T) {
+	tests := []struct {
+		key     string
+		channel string
+	}{
+		{key: "key1", channel: "emitter/a/"},
+	}
+
+	for _, tc := range tests {
+		channel := MakeChannel(tc.key, tc.channel)
+		assert.Equal(t, tc.key, string(channel.Key))
+		assert.Equal(t, tc.channel, string(channel.Channel))
+	}
+}
+
+func TestChannelString(t *testing.T) {
+	tests := []struct {
+		channel string
+	}{
+		{channel: "emitter/a/?last=42&abc=9"},
+		{channel: "emitter/a/?last=1200"},
+		{channel: "emitter/a/?last=1200a"},
+		{channel: "emitter/a/"},
+	}
+
+	for _, tc := range tests {
+		channel := ParseChannel([]byte(tc.channel))
+		assert.Equal(t, tc.channel, channel.String())
 	}
 }

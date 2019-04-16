@@ -16,6 +16,7 @@ package message
 
 import (
 	"sync"
+	"time"
 )
 
 type node struct {
@@ -31,7 +32,7 @@ func (n *node) orphan() {
 	}
 
 	delete(n.parent.children, n.word)
-	if len(n.parent.subs) == 0 && len(n.parent.children) == 0 {
+	if n.parent.subs.Size() == 0 && len(n.parent.children) == 0 {
 		n.parent.orphan()
 	}
 }
@@ -47,7 +48,7 @@ type Trie struct {
 func NewTrie() *Trie {
 	return &Trie{
 		root: &node{
-			subs:     Subscribers{},
+			subs:     newSubscribers(),
 			children: make(map[uint32]*node),
 		},
 	}
@@ -69,7 +70,7 @@ func (t *Trie) Subscribe(ssid Ssid, sub Subscriber) (*Subscription, error) {
 		if !ok {
 			child = &node{
 				word:     word,
-				subs:     Subscribers{},
+				subs:     newSubscribers(),
 				parent:   curr,
 				children: make(map[uint32]*node),
 			}
@@ -107,38 +108,87 @@ func (t *Trie) Unsubscribe(ssid Ssid, subscriber Subscriber) {
 	}
 
 	// Remove orphans
-	if len(curr.subs) == 0 && len(curr.children) == 0 {
+	if curr.subs.Size() == 0 && len(curr.children) == 0 {
 		curr.orphan()
 	}
 	t.Unlock()
 }
 
 // Lookup returns the Subscribers for the given topic.
-func (t *Trie) Lookup(query Ssid) (subs Subscribers) {
+func (t *Trie) Lookup(ssid Ssid, filter func(s Subscriber) bool) (subs Subscribers) {
+	subs = newSubscribers()
 	t.RLock()
-	t.lookup(query, &subs, t.root)
+	t.lookup(ssid, &subs, t.root, filter)
+	if contractNode, ok := t.root.children[ssid[0]]; ok {
+		if shareNode, ok := contractNode.children[share]; ok {
+			t.randomByGroup(ssid[1:], &subs, shareNode, filter)
+		}
+	}
+
 	t.RUnlock()
 	return
 }
 
-func (t *Trie) lookup(query Ssid, subs *Subscribers, node *node) {
+func (t *Trie) lookup(query Ssid, subs *Subscribers, node *node, filter func(s Subscriber) bool) {
 
 	// Add subscribers from the current branch
-	for _, s := range node.subs {
-		subs.AddUnique(s)
+	subs.AddRange(node.subs, filter)
+
+	// If we're done, stop
+	if len(query) == 0 {
+		return
 	}
 
-	// If we're not yet done, continue
-	if len(query) > 0 {
-
-		// Go through the exact match branch
-		if n, ok := node.children[query[0]]; ok {
-			t.lookup(query[1:], subs, n)
-		}
-
-		// Go through wildcard match branc
-		if n, ok := node.children[wildcard]; ok {
-			t.lookup(query[1:], subs, n)
-		}
+	// Go through the exact match branch
+	if n, ok := node.children[query[0]]; ok {
+		t.lookup(query[1:], subs, n, filter)
 	}
+
+	// Go through wildcard match branch
+	if n, ok := node.children[wildcard]; ok {
+		t.lookup(query[1:], subs, n, filter)
+	}
+}
+
+// Reusable pool of subscriber groups
+var temp = &sync.Pool{
+	New: func() interface{} {
+		x := time.Now().UnixNano()
+		return &tempState{
+			list: newSubscribers(),
+			rand: uint32((x >> 32) ^ x),
+		}
+	},
+}
+
+type tempState struct {
+	list Subscribers
+	rand uint32
+}
+
+// RandomByGroup adds a random subscribers for shared subscriptions, by share group
+func (t *Trie) randomByGroup(query Ssid, subs *Subscribers, shareNode *node, filter func(s Subscriber) bool) {
+	tmp := temp.Get().(*tempState)
+	defer temp.Put(tmp)
+
+	// Select a random subscriber from each share group (child of the share node)
+	for _, n := range shareNode.children {
+		tmp.list.Reset() // recycle
+		t.lookup(query, &tmp.list, n, filter)
+		if tmp.list.Size() == 0 {
+			continue
+		}
+
+		// Generate a random number using xorshift
+		x := tmp.rand
+		x ^= x << 13
+		x ^= x >> 17
+		x ^= x << 5
+		tmp.rand = x
+
+		// Select a random element from the list and add it
+		subs.AddUnique(tmp.list.Random(x))
+
+	}
+	return
 }

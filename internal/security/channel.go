@@ -15,6 +15,7 @@
 package security
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 	"unsafe"
@@ -60,19 +61,51 @@ func (c *Channel) Target() uint32 {
 
 // TTL returns a Time-To-Live option.
 func (c *Channel) TTL() (int64, bool) {
-	return c.getOption("ttl")
+	return c.getOption("ttl", 64)
 }
 
 // Last returns the 'last' option, which is a number of messages to retrieve.
 func (c *Channel) Last() (int64, bool) {
-	return c.getOption("last")
+	return c.getOption("last", 64)
+}
+
+// Exclude returns whether the exclude me ('me=0') option was set or not.
+func (c *Channel) Exclude() bool {
+	v, ok := c.getOption("me", 64)
+	return ok && v == 0
 }
 
 // Window returns the from-until options which should be a UTC unix timestamp in seconds.
 func (c *Channel) Window() (time.Time, time.Time) {
-	u0, _ := c.getOption("from")
-	u1, _ := c.getOption("until")
+	u0, _ := c.getOption("from", 64)
+	u1, _ := c.getOption("until", 64)
 	return toUnix(u0), toUnix(u1)
+}
+
+// SafeString returns a string representation of the channel without the key.
+func (c *Channel) SafeString() string {
+	text := string(c.Channel)
+	if len(c.Options) == 0 {
+		return text
+	}
+
+	text += "?"
+	for i, v := range c.Options {
+		if i > 0 {
+			text += "&"
+		}
+
+		text += v.Key + "=" + v.Value
+	}
+	return text
+}
+
+// String returns a string representation of the channel.
+func (c *Channel) String() string {
+	text := string(c.Key)
+	text += "/"
+	text += c.SafeString()
+	return text
 }
 
 // Converts the time to Unix Time with validation.
@@ -85,16 +118,21 @@ func toUnix(t int64) time.Time {
 }
 
 // getOptUint retrieves a Uint option
-func (c *Channel) getOption(name string) (int64, bool) {
+func (c *Channel) getOption(name string, bitSize int) (int64, bool) {
 	for i := 0; i < len(c.Options); i++ {
 		if c.Options[i].Key == name {
-			if val, err := strconv.ParseInt(c.Options[i].Value, 10, 64); err == nil {
+			if val, err := strconv.ParseInt(c.Options[i].Value, 10, bitSize); err == nil {
 				return int64(val), true
 			}
 			return 0, false
 		}
 	}
 	return 0, false
+}
+
+// MakeChannel attempts to parse the channel from the key and channel strings.
+func MakeChannel(key, channelWithOptions string) *Channel {
+	return ParseChannel([]byte(fmt.Sprintf("%s/%s", key, channelWithOptions)))
 }
 
 // ParseChannel attempts to parse the channel from the underlying slice.
@@ -193,7 +231,7 @@ func (c *Channel) parseChannel(text []byte) (i int) {
 			continue
 
 		// Valid character, but nothing special
-		case (symbol >= 45 && symbol <= 58) || (symbol >= 65 && symbol <= 122):
+		case (symbol >= 45 && symbol <= 58) || (symbol >= 65 && symbol <= 122) || symbol == 36:
 			if wildcards > 0 {
 				c.ChannelType = ChannelInvalid
 				return i
@@ -264,8 +302,8 @@ func (c *Channel) parseOptions(text []byte) (i int, ok bool) {
 
 		// Set the option
 		c.Options = append(c.Options, ChannelOption{
-			Key:   unsafeToString(key),
-			Value: unsafeToString(val),
+			Key:   binaryToString(&key),
+			Value: binaryToString(&val),
 		})
 
 		val = val[0:0]
@@ -275,10 +313,6 @@ func (c *Channel) parseOptions(text []byte) (i int, ok bool) {
 	return i, true
 }
 
-// unsafeToString is used when you really want to convert a slice
-// of bytes to a string without incurring overhead. It is only safe
-// to use if you really know the byte slice is not going to change
-// in the lifetime of the string
-func unsafeToString(bs []byte) string {
-	return *(*string)(unsafe.Pointer(&bs))
+func binaryToString(b *[]byte) string {
+	return *(*string)(unsafe.Pointer(b))
 }

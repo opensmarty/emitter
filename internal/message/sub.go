@@ -21,7 +21,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/emitter-io/emitter/internal/security"
+	"github.com/emitter-io/emitter/internal/security/hash"
 )
 
 // Various constant parts of the SSID.
@@ -30,6 +30,7 @@ const (
 	presence = uint32(3869262148)
 	query    = uint32(3939663052)
 	wildcard = uint32(1815237614)
+	share    = uint32(1480642916)
 )
 
 // Query represents a constant SSID for a query.
@@ -40,10 +41,10 @@ var Query = Ssid{system, query}
 type Ssid []uint32
 
 // NewSsid creates a new SSID.
-func NewSsid(contract uint32, c *security.Channel) Ssid {
-	ssid := make([]uint32, 0, len(c.Query)+1)
+func NewSsid(contract uint32, query []uint32) Ssid {
+	ssid := make([]uint32, 0, len(query)+1)
 	ssid = append(ssid, uint32(contract))
-	ssid = append(ssid, c.Query...)
+	ssid = append(ssid, query...)
 	return ssid
 }
 
@@ -53,6 +54,15 @@ func NewSsidForPresence(original Ssid) Ssid {
 	ssid = append(ssid, system)
 	ssid = append(ssid, presence)
 	ssid = append(ssid, original...)
+	return ssid
+}
+
+// NewSsidForShare creates a new SSID for shared subscriptions.
+func NewSsidForShare(original Ssid) Ssid {
+	ssid := make([]uint32, 0, len(original)+1)
+	ssid = append(ssid, original[0])
+	ssid = append(ssid, share)
+	ssid = append(ssid, original[1:]...)
 	return ssid
 }
 
@@ -126,41 +136,77 @@ type Subscriber interface {
 // ------------------------------------------------------------------------------------
 
 // Subscribers represents a subscriber set which can contain only unique values.
-type Subscribers []Subscriber
+type Subscribers map[uint32]Subscriber
+
+// NewSubscribers creates a new set of subscribers.
+func newSubscribers() Subscribers {
+	return make(Subscribers, 16)
+}
 
 // AddUnique adds a subscriber to the set.
-func (s *Subscribers) AddUnique(value Subscriber) (added bool) {
-	if s.Contains(value) == false {
-		*s = append(*s, value)
-		added = true
+func (s *Subscribers) AddUnique(value Subscriber) bool {
+	if value != nil {
+		key := hash.OfString(value.ID())
+		if _, found := (*s)[key]; !found {
+			(*s)[key] = value
+			return true
+		}
 	}
-	return
+	return false
+}
+
+// AddRange adds multiple subscribers from an existing list of subscribers, with filter applied.
+func (s *Subscribers) AddRange(from Subscribers, filter func(s Subscriber) bool) {
+	for id, v := range from {
+		if filter == nil || filter(v) {
+			(*s)[id] = v // This would simply overwrite duplicates
+		}
+	}
 }
 
 // Remove removes a subscriber from the set.
-func (s *Subscribers) Remove(value Subscriber) (removed bool) {
-	for i, v := range *s {
-		if v == value {
-			a := *s
-			a[i] = a[len(a)-1]
-			a[len(a)-1] = nil
-			a = a[:len(a)-1]
-			*s = a
-			removed = true
-			return
+func (s *Subscribers) Remove(value Subscriber) bool {
+	if value != nil {
+		key := hash.OfString(value.ID())
+		if _, ok := (*s)[key]; ok {
+			delete(*s, key)
+			return true
 		}
+	}
+
+	return false
+}
+
+// Reset recycles the list of subscribers.
+func (s *Subscribers) Reset() {
+	for k := range *s {
+		delete(*s, k)
+	}
+}
+
+// Size returns the size of the subscriber list.
+func (s *Subscribers) Size() int {
+	return len(*s)
+}
+
+// Random picks a random subscriber from the map. The 'rnd' argument must be a 32-bit randomly
+// generated unsigned integer in range of [0, math.MaxUint32).
+func (s *Subscribers) Random(rnd uint32) (v Subscriber) {
+	i, x := uint32(0), uint32((uint64(rnd)*uint64(s.Size()))>>32)
+	for _, v = range *s {
+		if i == x {
+			break
+		}
+		i++
 	}
 	return
 }
 
 // Contains checks whether a subscriber is in the set.
-func (s *Subscribers) Contains(value Subscriber) bool {
-	for _, v := range *s {
-		if v == value {
-			return true
-		}
-	}
-	return false
+func (s *Subscribers) Contains(value Subscriber) (ok bool) {
+	key := hash.OfString(value.ID())
+	_, ok = (*s)[key]
+	return
 }
 
 // Subscription represents a topic subscription.

@@ -1,6 +1,8 @@
 package message
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	"github.com/emitter-io/emitter/internal/security"
@@ -8,7 +10,7 @@ import (
 )
 
 func BenchmarkSsidEncode(b *testing.B) {
-	ssid := NewSsid(0, &security.Channel{Query: []uint32{56498455, 44565213, 46512350, 18204498}})
+	ssid := NewSsid(0, []uint32{56498455, 44565213, 46512350, 18204498})
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -23,6 +25,12 @@ func TestSsidPresence(t *testing.T) {
 	assert.EqualValues(t, Ssid{0, 3869262148, 1, 2, 3}, ssid)
 }
 
+func TestSsidShare(t *testing.T) {
+	ssid := NewSsidForShare(Ssid{1, 2, 3})
+	assert.NotNil(t, ssid)
+	assert.EqualValues(t, Ssid{1, share, 2, 3}, ssid)
+}
+
 func TestSsid(t *testing.T) {
 	c := security.Channel{
 		Key:         []byte("key"),
@@ -32,7 +40,7 @@ func TestSsid(t *testing.T) {
 		ChannelType: security.ChannelStatic,
 	}
 
-	ssid := NewSsid(0, &c)
+	ssid := NewSsid(0, c.Query)
 	assert.Equal(t, uint32(0), ssid.Contract())
 	assert.Equal(t, uint32(0x2c), ssid.GetHashCode())
 }
@@ -53,7 +61,7 @@ func TestSsidEncode(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		ssid := NewSsid(0, &security.Channel{Query: tc.ssid})
+		ssid := NewSsid(0, tc.ssid)
 		assert.Equal(t, tc.expected, ssid.Encode())
 	}
 }
@@ -86,22 +94,23 @@ func TestSub_getOrCreate(t *testing.T) {
 }
 
 func TestSubscribers(t *testing.T) {
-	var subs Subscribers
+	subs := newSubscribers()
+	sub := &testSubscriber{id: "x"}
 
 	{
-		added := subs.AddUnique(nil)
+		added := subs.AddUnique(sub)
 		assert.True(t, added)
 	}
 	{
-		added := subs.AddUnique(nil)
+		added := subs.AddUnique(sub)
 		assert.False(t, added)
 	}
 	{
-		removed := subs.Remove(nil)
+		removed := subs.Remove(sub)
 		assert.True(t, removed)
 	}
 	{
-		removed := subs.Remove(nil)
+		removed := subs.Remove(sub)
 		assert.False(t, removed)
 	}
 }
@@ -156,4 +165,68 @@ func TestSub_Increment(t *testing.T) {
 	// Test decrement previously incremented counter.
 	isDecremented = counters.Decrement(ssid2)
 	assert.True(t, isDecremented)
+}
+
+func TestCollisions(t *testing.T) {
+	subs := newSubscribers()
+	count := 100000
+	for i := 0; i < count; i++ {
+		subs.AddUnique(&testSubscriber{fmt.Sprintf("%d", i)})
+	}
+	assert.Equal(t, count, subs.Size())
+}
+
+func TestRandom(t *testing.T) {
+	rand.Seed(42)
+	for count := 2; count < 20; count++ {
+		testRandom(t, count, 100000)
+	}
+}
+
+func testRandom(t *testing.T, count, iter int) {
+	subs := newSubscribers()
+	for i := 0; i < count; i++ {
+		subs.AddUnique(&testSubscriber{fmt.Sprintf("%d", i)})
+	}
+
+	n := 1552127721834
+	x := uint32((n >> 32) ^ n)
+	out := make(map[string]int)
+	for i := 0; i < iter; i++ {
+		x ^= x << 13
+		x ^= x >> 17
+		x ^= x << 5
+		r := x
+		if s := subs.Random(r); s != nil {
+			out[s.ID()]++
+		}
+	}
+
+	assert.Equal(t, count, len(out))
+	avg := float64(iter) / float64(count)
+	for k, v := range out {
+		p := (float64(v) - float64(avg)) / float64(avg)
+		if p < 0 {
+			p = -p
+		}
+		if p > 0.05 {
+			t.Fatalf("[count = %d] skew more than 5%% for key '%v' it's %.2f%%", count, k, p*100)
+		}
+	}
+}
+
+// BenchmarkReset-8   	    2000	    560516 ns/op	     409 B/op	       0 allocs/op
+func BenchmarkReset(b *testing.B) {
+	orig := newSubscribers()
+	subs := newSubscribers()
+	for i := 0; i < 10000; i++ {
+		orig.AddUnique(&testSubscriber{fmt.Sprintf("%d", i)})
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		subs.AddRange(orig, nil)
+		subs.Reset()
+	}
 }

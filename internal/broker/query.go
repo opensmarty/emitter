@@ -126,9 +126,9 @@ func (c *QueryManager) onRequest(ssid message.Ssid, channel string, payload []by
 	}
 
 	// Get the peer to reply to
-	peer, ok := c.service.cluster.FindPeer(replyAddr)
-	if !ok {
-		return errors.New("unable to reply to a request, peer does not exist")
+	peer := c.service.cluster.FindPeer(replyAddr)
+	if !peer.IsActive() {
+		return errors.New("unable to reply to a request, peer is not active")
 	}
 
 	// Go through all the handlers and execute the first matching one
@@ -146,10 +146,11 @@ func (c *QueryManager) Query(query string, payload []byte) (message.Awaiter, err
 
 	// Create an awaiter
 	// TODO: replace the max with the total number of cluster nodes
+	numPeers := c.service.NumPeers()
 	awaiter := &queryAwaiter{
 		id:      atomic.AddUint32(&c.next, 1),
-		receive: make(chan []byte),
-		maximum: c.service.NumPeers(),
+		receive: make(chan []byte, numPeers),
+		maximum: numPeers,
 		manager: c,
 	}
 
@@ -164,7 +165,7 @@ func (c *QueryManager) Query(query string, payload []byte) (message.Awaiter, err
 		message.Ssid{idSystem, idQuery, awaiter.id},
 		[]byte(channel),
 		payload,
-	))
+	), "")
 	return awaiter, nil
 }
 
