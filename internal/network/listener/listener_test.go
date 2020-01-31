@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -53,7 +54,7 @@ func safeDial(t *testing.T, addr net.Addr) (*rpc.Client, func()) {
 }
 
 func testListener(t *testing.T) (*Listener, func()) {
-	l, err := New(":0", nil)
+	l, err := New(":0", Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +174,11 @@ const (
 )
 
 func TestTimeout(t *testing.T) {
+	if os.Getenv("GITHUB_WORKSPACE") != "" {
+		t.Skip("Skipping the test in CI environment")
+		return
+	}
+
 	defer leakCheck(t)()
 	m, Close := testListener(t)
 	defer Close()

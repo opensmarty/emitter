@@ -1,31 +1,44 @@
+/**********************************************************************************
+* Copyright (c) 2009-2019 Misakai Ltd.
+* This program is free software: you can redistribute it and/or modify it under the
+* terms of the GNU Affero General Public License as published by the  Free Software
+* Foundation, either version 3 of the License, or(at your option) any later version.
+*
+* This program is distributed  in the hope that it  will be useful, but WITHOUT ANY
+* WARRANTY;  without even  the implied warranty of MERCHANTABILITY or FITNESS FOR A
+* PARTICULAR PURPOSE.  See the GNU Affero General Public License  for  more details.
+*
+* You should have  received a copy  of the  GNU Affero General Public License along
+* with this program. If not, see<http://www.gnu.org/licenses/>.
+************************************************************************************/
+
 package broker
 
 import (
-	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	conf "github.com/emitter-io/config"
-	"github.com/emitter-io/emitter/internal/config"
+	"github.com/emitter-io/emitter/internal/broker/keygen"
+	"github.com/emitter-io/emitter/internal/errors"
 	"github.com/emitter-io/emitter/internal/message"
 	"github.com/emitter-io/emitter/internal/network/mqtt"
-	"github.com/emitter-io/emitter/internal/provider/contract"
 	secmock "github.com/emitter-io/emitter/internal/provider/contract/mock"
-	"github.com/emitter-io/emitter/internal/provider/storage"
 	"github.com/emitter-io/emitter/internal/provider/usage"
-	"github.com/emitter-io/emitter/internal/security"
+	"github.com/emitter-io/emitter/internal/security/license"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-const testLicense = "zT83oDV0DWY5_JysbSTPTDr8KB0AAAAAAAAAAAAAAAI"
+const (
+	testLicense   = "zT83oDV0DWY5_JysbSTPTDr8KB0AAAAAAAAAAAAAAAI"
+	testLicenseV2 = "RfBEIIFz1nNLf12JYRpoEUqFPLb3na0X_xbP_h3PM_CqDUVBGJfEV3WalW2maauQd48o-TcTM_61BfEsELfk0qMDqrCTswkB:2"
+)
 
 func Test_onHTTPPresence(t *testing.T) {
-	license, _ := security.ParseLicense(testLicense)
+	license, _ := license.Parse(testLicense)
 
 	tests := []struct {
 		payload       string
@@ -59,7 +72,7 @@ func Test_onHTTPPresence(t *testing.T) {
 		},
 		{
 			payload:       "",
-			err:           ErrBadRequest,
+			err:           errors.ErrBadRequest,
 			success:       false,
 			status:        http.StatusBadRequest,
 			contractValid: true,
@@ -72,7 +85,7 @@ func Test_onHTTPPresence(t *testing.T) {
 			contractFound: true,
 			success:       false,
 			status:        http.StatusBadRequest,
-			err:           ErrBadRequest,
+			err:           errors.ErrBadRequest,
 			msg:           "Invalid channel case",
 		},
 		{
@@ -81,12 +94,12 @@ func Test_onHTTPPresence(t *testing.T) {
 			contractFound: true,
 			success:       false,
 			status:        http.StatusUnauthorized,
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			msg:           "Key for wrong channel case",
 		},
 		{
 			payload:       `{"key":"VfW_Cv5wWVZPHgCvLwJAuU2bgRFKXQEY","channel":"a+b","status":true}`,
-			err:           ErrNotFound,
+			err:           errors.ErrNotFound,
 			status:        http.StatusNotFound,
 			contractValid: true,
 			contractFound: false,
@@ -94,7 +107,7 @@ func Test_onHTTPPresence(t *testing.T) {
 		},
 		{
 			payload:       `{"key":"VfW_Cv5wWVZPHgCvLwJAuU2bgRFKXQEY","channel":"a+b","status":true}`,
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			status:        http.StatusUnauthorized,
 			contractValid: false,
 			contractFound: true,
@@ -111,12 +124,13 @@ func Test_onHTTPPresence(t *testing.T) {
 		provider := secmock.NewContractProvider()
 		provider.On("Get", mock.Anything).Return(contract, tc.contractFound)
 
+		cipher, _ := license.Cipher()
 		s := &Service{
 			contracts:     provider,
 			subscriptions: message.NewTrie(),
 			License:       license,
+			Keygen:        keygen.NewProvider(cipher, provider),
 		}
-		s.Cipher, _ = s.License.Cipher()
 
 		req, _ := http.NewRequest("POST", "/presence", strings.NewReader(tc.payload))
 
@@ -135,25 +149,14 @@ func Test_onHTTPPresence(t *testing.T) {
 }
 
 func TestPubsub(t *testing.T) {
-	cfg := config.NewDefault().(*config.Config)
-	cfg.License = testLicense
-	cfg.ListenAddr = "127.0.0.1:9998"
-	cfg.Cluster = nil
-	cfg.TLS = &conf.TLSConfig{}
-
-	// Start the broker asynchronously
-	broker, svcErr := NewService(context.Background(), cfg)
-	broker.contracts = contract.NewSingleContractProvider(broker.License, usage.NewNoop())
-	broker.storage = storage.NewInMemory(broker)
-	broker.storage.Configure(nil)
-	assert.NoError(t, svcErr)
+	const port = 9996
+	broker := newTestBroker(port, 2)
 	defer broker.Close()
-	go broker.Listen()
 
-	// Create a client
-	cli, dialErr := net.Dial("tcp", "127.0.0.1:9998")
-	assert.NoError(t, dialErr)
+	cli := newTestClient(port)
 	defer cli.Close()
+
+	key1 := "w07Jv3TMhYTg6lLk6fQoVG2KCe7gjFPk" // on a/b/c/ with 'rwslp'
 
 	{ // Connect to the broker
 		connect := mqtt.Connect{ClientID: []byte("test")}
@@ -176,15 +179,15 @@ func TestPubsub(t *testing.T) {
 	}
 
 	{ // Read pong
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfPingresp, pkt.Type())
 	}
 
 	{ // Publish a retained message
 		msg := mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0, Retain: true},
-			Topic:   []byte("EbUlduEbUssgWueAWjkEZwdYG5YC0dGh/a/b/c/"),
+			Header:  mqtt.Header{QOS: 0, Retain: true},
+			Topic:   []byte(key1 + "/a/b/c/"),
 			Payload: []byte("retained message"),
 		}
 		_, err := msg.EncodeTo(cli)
@@ -193,9 +196,9 @@ func TestPubsub(t *testing.T) {
 
 	{ // Subscribe to a topic
 		sub := mqtt.Subscribe{
-			Header: &mqtt.StaticHeader{QOS: 0},
+			Header: mqtt.Header{QOS: 0},
 			Subscriptions: []mqtt.TopicQOSTuple{
-				{Topic: []byte("EbUlduEbUssgWueAWjkEZwdYG5YC0dGh/a/b/c/"), Qos: 0},
+				{Topic: []byte(key1 + "/a/b/c/"), Qos: 0},
 			},
 		}
 		_, err := sub.EncodeTo(cli)
@@ -203,26 +206,26 @@ func TestPubsub(t *testing.T) {
 	}
 
 	{ // Read the retained message
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfPublish, pkt.Type())
 		assert.Equal(t, &mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
+			Header:  mqtt.Header{QOS: 0},
 			Topic:   []byte("a/b/c/"),
 			Payload: []byte("retained message"),
 		}, pkt)
 	}
 
 	{ // Read suback
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfSuback, pkt.Type())
 	}
 
 	{ // Publish a message
 		msg := mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
-			Topic:   []byte("EbUlduEbUssgWueAWjkEZwdYG5YC0dGh/a/b/c/"),
+			Header:  mqtt.Header{QOS: 0},
+			Topic:   []byte(key1 + "/a/b/c/"),
 			Payload: []byte("hello world"),
 		}
 		_, err := msg.EncodeTo(cli)
@@ -230,11 +233,11 @@ func TestPubsub(t *testing.T) {
 	}
 
 	{ // Read the message back
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfPublish, pkt.Type())
 		assert.Equal(t, &mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
+			Header:  mqtt.Header{QOS: 0},
 			Topic:   []byte("a/b/c/"),
 			Payload: []byte("hello world"),
 		}, pkt)
@@ -242,8 +245,8 @@ func TestPubsub(t *testing.T) {
 
 	{ // Publish a message but ignore ourselves
 		msg := mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
-			Topic:   []byte("EbUlduEbUssgWueAWjkEZwdYG5YC0dGh/a/b/c/?me=0"),
+			Header:  mqtt.Header{QOS: 0},
+			Topic:   []byte(key1 + "/a/b/c/?me=0"),
 			Payload: []byte("hello world"),
 		}
 		_, err := msg.EncodeTo(cli)
@@ -252,9 +255,9 @@ func TestPubsub(t *testing.T) {
 
 	{ // Unsubscribe from the topic
 		sub := mqtt.Unsubscribe{
-			Header: &mqtt.StaticHeader{QOS: 0},
+			Header: mqtt.Header{QOS: 0},
 			Topics: []mqtt.TopicQOSTuple{
-				{Topic: []byte("EbUlduEbUssgWueAWjkEZwdYG5YC0dGh/a/b/c/"), Qos: 0},
+				{Topic: []byte(key1 + "/a/b/c/"), Qos: 0},
 			},
 		}
 		_, err := sub.EncodeTo(cli)
@@ -262,14 +265,14 @@ func TestPubsub(t *testing.T) {
 	}
 
 	{ // Read unsuback
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfUnsuback, pkt.Type())
 	}
 
 	{ // Create a private link
 		msg := mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
+			Header:  mqtt.Header{QOS: 0},
 			Topic:   []byte("emitter/link/?req=1"),
 			Payload: []byte(`{ "name": "hi", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "private": true }`),
 		}
@@ -278,14 +281,14 @@ func TestPubsub(t *testing.T) {
 	}
 
 	{ // Read the link response
-		pkt, err := mqtt.DecodePacket(cli,65536)
+		pkt, err := mqtt.DecodePacket(cli, 65536)
 		assert.NoError(t, err)
 		assert.Equal(t, mqtt.TypeOfPublish, pkt.Type())
 	}
 
 	{ // Publish a message to a link
 		msg := mqtt.Publish{
-			Header:  &mqtt.StaticHeader{QOS: 0},
+			Header:  mqtt.Header{QOS: 0},
 			Topic:   []byte("hi"),
 			Payload: []byte("hello world"),
 		}

@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -312,8 +312,8 @@ func (s *Swarm) OnGossipUnicast(src mesh.PeerName, buf []byte) (err error) {
 	}
 
 	// Go through each message in the decoded frame
-	for _, m := range frame {
-		s.OnMessage(&m)
+	for i := range frame {
+		s.OnMessage(&frame[i])
 	}
 
 	return nil

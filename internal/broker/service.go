@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/emitter-io/address"
 	"github.com/emitter-io/emitter/internal/broker/cluster"
+	"github.com/emitter-io/emitter/internal/broker/keygen"
 	"github.com/emitter-io/emitter/internal/config"
 	"github.com/emitter-io/emitter/internal/message"
 	"github.com/emitter-io/emitter/internal/network/listener"
@@ -44,16 +44,18 @@ import (
 	"github.com/emitter-io/emitter/internal/provider/storage"
 	"github.com/emitter-io/emitter/internal/provider/usage"
 	"github.com/emitter-io/emitter/internal/security"
+	"github.com/emitter-io/emitter/internal/security/license"
 	"github.com/emitter-io/stats"
 	"github.com/kelindar/tcp"
 )
 
 // Service represents the main structure.
 type Service struct {
+	connections   int64                // The number of currently open connections.
 	context       context.Context      // The context for the service.
 	cancel        context.CancelFunc   // The cancellation function.
-	Cipher        *security.Cipher     // The cipher to use for decoding and encoding keys.
-	License       *security.License    // The licence for this emitter server.
+	License       license.License      // The licence for this emitter server.
+	Keygen        *keygen.Provider     // The key generation provider.
 	Config        *config.Config       // The configuration for the service.
 	subscriptions *message.Trie        // The subscription matching trie.
 	http          *http.Server         // The underlying HTTP server.
@@ -66,7 +68,6 @@ type Service struct {
 	monitor       monitor.Storage      // The storage provider for stats.
 	measurer      stats.Measurer       // The monitoring registry for the service.
 	metering      usage.Metering       // The usage storage for metering contracts.
-	connections   int64                // The number of currently open connections.
 }
 
 // NewService creates a new service.
@@ -86,15 +87,6 @@ func NewService(ctx context.Context, cfg *config.Config) (s *Service, err error)
 
 	// Create a new HTTP request multiplexer
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.onHealth)
-	mux.HandleFunc("/keygen", s.onHTTPKeyGen)
-	mux.HandleFunc("/presence", s.onHTTPPresence)
-	mux.HandleFunc("/debug/pprof/", pprof.Index)          // TODO: use config flag to enable/disable this
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline) // TODO: use config flag to enable/disable this
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile) // TODO: use config flag to enable/disable this
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)   // TODO: use config flag to enable/disable this
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)     // TODO: use config flag to enable/disable this
-	mux.HandleFunc("/", s.onRequest)
 
 	// Attach handlers
 	s.http.Handler = mux
@@ -102,12 +94,7 @@ func NewService(ctx context.Context, cfg *config.Config) (s *Service, err error)
 	s.querier = newQueryManager(s)
 
 	// Parse the license
-	if s.License, err = security.ParseLicense(cfg.License); err != nil {
-		return nil, err
-	}
-
-	// Create a new cipher from the licence provided
-	if s.Cipher, err = s.License.Cipher(); err != nil {
+	if s.License, err = license.Parse(cfg.License); err != nil {
 		return nil, err
 	}
 
@@ -151,8 +138,29 @@ func NewService(ctx context.Context, cfg *config.Config) (s *Service, err error)
 		monitor.NewNoop(),
 		monitor.NewHTTP(sampler),
 		monitor.NewStatsd(sampler, nodeName),
+		monitor.NewPrometheus(sampler, mux),
 	).(monitor.Storage)
 	logging.LogTarget("service", "configured monitoring sink", s.monitor.Name())
+
+	// Create a new cipher from the licence provided
+	cipher, err := s.License.Cipher()
+	if err != nil {
+		return nil, err
+	}
+
+	// Attach handlers
+	s.Keygen = keygen.NewProvider(cipher, s.contracts)
+	if cfg.Debug {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
+	mux.HandleFunc("/health", s.onHealth)
+	mux.HandleFunc("/keygen", s.Keygen.HTTP())
+	mux.HandleFunc("/presence", s.onHTTPPresence)
+	mux.HandleFunc("/", s.onRequest)
 
 	// Addresses and things
 	logging.LogTarget("service", "configured node name", nodeName)
@@ -203,6 +211,7 @@ func (s *Service) Listen() (err error) {
 		// If we need to validate certificate, spin up a listener on port 80
 		// More info: https://community.letsencrypt.org/t/2018-01-11-update-regarding-acme-tls-sni-and-shared-hosting-infrastructure/50188
 		if tlsValidator != nil {
+			logging.LogAction("service", "exposing autocert TLS validation on :80")
 			go http.ListenAndServe(":80", tlsValidator)
 		}
 
@@ -221,7 +230,10 @@ func (s *Service) listen(addr *net.TCPAddr, conf *tls.Config) {
 
 	// Create new listener
 	logging.LogTarget("service", "starting the listener", addr)
-	l, err := listener.New(addr.String(), conf)
+	l, err := listener.New(addr.String(), listener.Config{
+		FlushRate: s.Config.Limit.FlushRate,
+		TLS:       conf,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -287,7 +299,7 @@ func (s *Service) notifyUnsubscribe(conn *Conn, ssid message.Ssid, channel []byt
 
 // Occurs when a new client connection is accepted.
 func (s *Service) onAcceptConn(t net.Conn) {
-	conn := s.newConn(t)
+	conn := s.newConn(t, s.Config.Limit.ReadRate)
 	go conn.Process()
 }
 
@@ -302,16 +314,6 @@ func (s *Service) onRequest(w http.ResponseWriter, r *http.Request) {
 // Occurs when a new HTTP health check is received.
 func (s *Service) onHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
-}
-
-// Occurs when a new HTTP request is received.
-func (s *Service) onHTTPKeyGen(w http.ResponseWriter, r *http.Request) {
-	if resp, err := http.Get("http://s3-eu-west-1.amazonaws.com/cdn.emitter.io/web/keygen.html"); err == nil {
-		if content, err := ioutil.ReadAll(resp.Body); err == nil {
-			w.Write(content)
-			return
-		}
-	}
 }
 
 // Occurs when a new HTTP presence request is received.
@@ -332,7 +334,7 @@ func (s *Service) onHTTPPresence(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Attempt to parse the key, this should be a master key
-	key, err := s.Cipher.DecryptKey([]byte(msg.Key))
+	key, err := s.Keygen.DecryptKey(msg.Key)
 	if err != nil || !key.HasPermission(security.AllowPresence) || key.IsExpired() {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -388,7 +390,6 @@ func (s *Service) onSubscribe(ssid message.Ssid, sub message.Subscriber) bool {
 		return false // Unable to subscribe
 	}
 
-	logging.LogTarget("service", "subscribe", ssid)
 	return true
 }
 
@@ -397,8 +398,6 @@ func (s *Service) onUnsubscribe(ssid message.Ssid, sub message.Subscriber) (ok b
 	subscribers := s.subscriptions.Lookup(ssid, nil)
 	if ok = subscribers.Contains(sub); ok {
 		s.subscriptions.Unsubscribe(ssid, sub)
-
-		logging.LogTarget("service", "unsubscribe", ssid)
 	}
 	return
 }
@@ -441,7 +440,6 @@ func (s *Service) publish(m *message.Message, exclude string) (n int64) {
 		return s.ID() != exclude
 	}
 
-	// Run the lookup and send the message
 	for _, subscriber := range s.subscriptions.Lookup(m.Ssid(), filter) {
 		subscriber.Send(m)
 		if subscriber.Type() == message.SubscriberDirect {
@@ -451,12 +449,31 @@ func (s *Service) publish(m *message.Message, exclude string) (n int64) {
 	return
 }
 
+// Authorize attempts to authorize a channel with its key
+func (s *Service) authorize(channel *security.Channel, permission uint8) (contract.Contract, security.Key, bool) {
+
+	// Attempt to parse the key
+	key, err := s.Keygen.DecryptKey(string(channel.Key))
+	if err != nil || key.IsExpired() {
+		return nil, nil, false
+	}
+
+	// Attempt to fetch the contract using the key. Underneath, it's cached.
+	contract, contractFound := s.contracts.Get(key.Contract())
+	if !contractFound || !contract.Validate(key) || !key.HasPermission(permission) || !key.ValidateChannel(channel) {
+		return nil, nil, false
+	}
+
+	// Return the contract and the key
+	return contract, key, true
+}
+
 // SelfPublish publishes a message to itself.
 func (s *Service) selfPublish(channelName string, payload []byte) {
 	channel := security.ParseChannel([]byte("emitter/" + channelName))
 	if channel.ChannelType == security.ChannelStatic {
 		s.publish(message.New(
-			message.NewSsid(s.License.Contract, channel.Query),
+			message.NewSsid(s.License.Contract(), channel.Query),
 			channel.Channel,
 			payload,
 		), "")

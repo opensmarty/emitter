@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -29,8 +29,10 @@ import (
 // Peer implements subscription.Subscriber
 var _ message.Subscriber = &Peer{}
 
-// Default message frame size to use
-const defaultFrameSize = 128
+const (
+	defaultFrameSize = 128              // Default message frame size to use
+	maxByteFrameSize = 10 * 1024 * 1024 // Hard limit imposed by our underlying gossip
+)
 
 // Peer represents a remote peer.
 type Peer struct {
@@ -124,12 +126,19 @@ func (p *Peer) processSendQueue() {
 		return
 	}
 
-	// Swap the frame and encode it
+	// Swap the frame and split the frame in chunks of at most 10MB 
+	// for gossip unicast to work.
 	frame := p.swap()
-	buffer := frame.Encode()
+	for {
+		var chunk message.Frame
+		chunk, frame = frame.Split(maxByteFrameSize)
+		if len(chunk) == 0 {
+			break
+		}
 
-	// Send the frame directly to the peer.
-	if err := p.sender.GossipUnicast(p.name, buffer); err != nil {
-		logging.LogError("peer", "gossip unicast", err)
+		buffer := chunk.Encode()
+		if err := p.sender.GossipUnicast(p.name, buffer); err != nil {
+			logging.LogError("peer", "gossip unicast", err)
+		}
 	}
 }

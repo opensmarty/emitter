@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -15,6 +15,7 @@
 package message
 
 import (
+	"bytes"
 	"sort"
 	"time"
 
@@ -69,6 +70,43 @@ func (m *Message) Expires() time.Time {
 	return time.Unix(m.Time(), 0).Add(time.Second * time.Duration(m.TTL))
 }
 
+// GetBinaryCodec retrieves a custom binary codec.
+func (m *Message) GetBinaryCodec() binary.Codec {
+	return new(messageCodec)
+}
+
+// Encode encodes the message into a binary & compressed representation.
+func (m *Message) Encode() []byte {
+
+	// Use a buffer pool to avoid allocating memory over and over again. It's safe here since
+	// we're using snappy right away which would perform a memory copy
+	encoder := encoders.Get().(*binary.Encoder)
+	defer encoders.Put(encoder)
+
+	buffer := encoder.Buffer().(*bytes.Buffer)
+	buffer.Reset()
+
+	// Encode into a temporary buffer
+	if err := encoder.Encode(m); err != nil {
+		panic(err) // Should never panic
+	}
+
+	// Decode from snappy with an allocation done by providing 'nil' destination.
+	return snappy.Encode(nil, buffer.Bytes())
+}
+
+// DecodeMessage decodes the message from the decoder.
+func DecodeMessage(buf []byte) (out Message, err error) {
+
+	// We need to allocate, given that the unmarshal is now no-copy. By using 'nil' as destination
+	// we make sure that the underlying buffer is calculated based on the decoded length.
+	if buf, err = snappy.Decode(nil, buf); err == nil {
+		err = binary.Unmarshal(buf, &out)
+	}
+
+	return
+}
+
 // ------------------------------------------------------------------------------------
 
 // Frame represents a message frame which is sent through the wire to the
@@ -85,6 +123,20 @@ func (f Frame) Sort() {
 	sort.Slice(f, func(i, j int) bool { return f[i].Time() < f[j].Time() })
 }
 
+// Split splits the frame by a specified number of bytes into two slices.
+func (f Frame) Split(maxByteSize int) (head Frame, tail Frame) {
+	var sum int
+	for i := 0; i < len(f); i++ {
+		msg := f[i]
+		size := len(msg.Payload) + len(msg.ID) + len(msg.Channel) + 20
+		if sum+size >= maxByteSize {
+			return f[:i], f[i:]
+		}
+		sum += size
+	}
+	return f, nil
+}
+
 // Limit takes the last N elements, sorted by message time
 func (f *Frame) Limit(n int) {
 	f.Sort()
@@ -94,22 +146,31 @@ func (f *Frame) Limit(n int) {
 }
 
 // Encode encodes the message frame
-func (f *Frame) Encode() (out []byte) {
-	var enc []byte
-	enc, err := binary.Marshal(f)
-	if err != nil {
+func (f *Frame) Encode() []byte {
+
+	// Use a buffer pool to avoid allocating memory over and over again. It's safe here since
+	// we're using snappy right away which would perform a memory copy
+	encoder := encoders.Get().(*binary.Encoder)
+	defer encoders.Put(encoder)
+
+	buffer := encoder.Buffer().(*bytes.Buffer)
+	buffer.Reset()
+
+	// Encode into a temporary buffer
+	if err := encoder.Encode(f); err != nil {
 		panic(err) // This should never happen unless there's some terrible bug in the encoder
 	}
 
-	return snappy.Encode(out, enc)
+	// Decode from snappy with an allocation done by providing 'nil' destination.
+	return snappy.Encode(nil, buffer.Bytes())
 }
 
 // DecodeFrame decodes the message frame from the decoder.
 func DecodeFrame(buf []byte) (out Frame, err error) {
-	// TODO: optimize
-	var buffer []byte
-	if buf, err = snappy.Decode(buffer, buf); err == nil {
-		out = make(Frame, 0, 64)
+
+	// We need to allocate, given that the unmarshal is now no-copy. By using 'nil' as destination
+	// we make sure that the underlying buffer is calculated based on the decoded length.
+	if buf, err = snappy.Decode(nil, buf); err == nil {
 		err = binary.Unmarshal(buf, &out)
 	}
 	return

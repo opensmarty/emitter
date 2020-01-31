@@ -1,4 +1,4 @@
-version: 2.0.{build}
+version: 2.{build}
 platform: x64
 branches:  
   only:
@@ -13,13 +13,10 @@ environment:
 install:  
   - set PATH=%GOPATH%\bin;c:\go\bin;%PATH%
   - rmdir c:\go /s /q
-  - appveyor DownloadFile https://storage.googleapis.com/golang/go1.12.windows-amd64.zip
-  - 7z x go1.12.windows-amd64.zip -y -oC:\ > NUL
+  - appveyor DownloadFile https://storage.googleapis.com/golang/go1.13.windows-amd64.zip
+  - 7z x go1.13.windows-amd64.zip -y -oC:\ > NUL
   - go version
-  - go get golang.org/x/tools/cmd/cover
-  - go get github.com/mattn/goveralls
-  - go get github.com/go-playground/overalls
-
+  
 build_script:
 - cmd: .\build.bat
 
@@ -31,10 +28,11 @@ deploy:
   - provider: GitHub
     auth_token:
       secure: ImwOgsH/e1F+reDfqNIvoQ773FZHsjQt/4znrFdxUVrs1VNpFK9IUaW4hIL/yl4c
-    release: 'v$(appveyor_build_version)'
-    description: 'This is Emitter broker build v$(appveyor_build_version).'
-    draft: true
+    release: 'edge'
+    description: 'This is v$(appveyor_build_version) pre-release which is automatically built on every commit to master.'
+    draft: false
     prerelease: true
+    force_update: true
     artifact: binary
     on:
       branch: master

@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -17,7 +17,6 @@ package message
 import (
 	"testing"
 
-	"github.com/kelindar/binary"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,9 +33,6 @@ func TestDecodeFrame(t *testing.T) {
 		newTestMessage(Ssid{1, 2, 3}, "a/b/c/", "hello abc"),
 		newTestMessage(Ssid{1, 2, 3}, "a/b/", "hello ab"),
 	}
-
-	// Append
-	//frame.Append(0, Ssid{1, 2, 3}, []byte("a/b/c/"), []byte("hello abc"))
 
 	// Encode
 	buffer := frame.Encode()
@@ -63,29 +59,54 @@ func TestNewFrame(t *testing.T) {
 	assert.Equal(t, 64, cap(f))
 }
 
-// 2000000	       577 ns/op	     320 B/op	       2 allocs/op
-func BenchmarkEncode(b *testing.B) {
-	m := Frame{
-		newTestMessage(Ssid{1, 2, 3}, "tweet/canada/english/", "This is a random tweet en english so we can test the payload. #emitter"),
+// BenchmarkCodec/Encode-8         	 3000000	       509 ns/op	     176 B/op	       1 allocs/op
+// BenchmarkCodec/Decode-8         	 3000000	       496 ns/op	     288 B/op	       3 allocs/op
+func BenchmarkCodec(b *testing.B) {
+	m := newTestMessage(Ssid{1, 2, 3}, "tweet/canada/english/", "This is a random tweet en english so we can test the payload. #emitter")
+	enc := m.Encode()
+	b.Run("Encode", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			m.Encode()
+		}
+	})
+
+	b.Run("Decode", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			DecodeMessage(enc)
+		}
+	})
+}
+
+// BenchmarkEncodeWithSnappy-8   	   10000	    188831 ns/op	   57374 B/op	       1 allocs/op
+func BenchmarkEncodeWithSnappy(b *testing.B) {
+	var frame Frame
+	for m := 0; m < 1000; m++ {
+		frame = append(frame, newTestMessage(Ssid{1, 2, 3}, "a/b/c/", "hello abc"))
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		binary.Marshal(&m)
+		frame.Encode()
 	}
 }
 
-// 2000000	       799 ns/op	     480 B/op	       3 allocs/op
-func BenchmarkEncodeWithSnappy(b *testing.B) {
-	m := Frame{
-		newTestMessage(Ssid{1, 2, 3}, "tweet/canada/english/", "This is a random tweet en english so we can test the payload. #emitter"),
+// Benchmark_DecodeFrame-8   	    5000	    284238 ns/op	  211217 B/op	    1004 allocs/op
+func Benchmark_DecodeFrame(b *testing.B) {
+	var frame Frame
+	for m := 0; m < 1000; m++ {
+		frame = append(frame, newTestMessage(Ssid{1, 2, 3}, "a/b/c/", "hello abc"))
 	}
+	encoded := frame.Encode()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.Encode()
+		DecodeFrame(encoded)
 	}
 }
 
@@ -101,4 +122,25 @@ func TestFrameLimit(t *testing.T) {
 	assert.Len(t, f, 2)
 	assert.Equal(t, "a/b/c/", string(f[0].Channel))
 	assert.Equal(t, "a/b/d/", string(f[1].Channel))
+}
+
+func TestFrameSplit(t *testing.T) {
+	f := Frame{
+		newTestMessage(Ssid{1, 2, 1}, "a/b/a/", "hello aba"),
+		newTestMessage(Ssid{1, 2, 2}, "a/b/b/", "hello abb"),
+		newTestMessage(Ssid{1, 2, 3}, "a/b/c/", "hello abc"),
+		newTestMessage(Ssid{1, 2, 4}, "a/b/d/", "hello abd"),
+	}
+
+	head, tail := f.Split(127)
+	assert.Len(t, head, 2)
+	assert.Len(t, tail, 2)
+}
+
+func TestFrameSplit_Empty(t *testing.T) {
+	f := Frame{}
+
+	head, tail := f.Split(127)
+	assert.Len(t, head, 0)
+	assert.Len(t, tail, 0)
 }

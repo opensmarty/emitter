@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -27,9 +27,8 @@ import (
 
 // Constants used throughout the service.
 const (
-	ChannelSeparator         = '/'   // The separator character.
-	maxMessageSize           = 65536 // Default Maximum message size allowed from/to the peer.
-	EncodingBufferSize       = 65536 // Initial buffer size for encoding buffers
+	ChannelSeparator = '/'   // The separator character.
+	maxMessageSize   = 65536 // Default Maximum message size allowed from/to the peer.
 )
 
 // VaultUser is the vault user to use for authentication
@@ -83,27 +82,27 @@ func New(filename string, stores ...cfg.SecretStore) *Config {
 
 // Config represents main configuration.
 type Config struct {
-	ListenAddr     string              `json:"listen"`             // The API port used for TCP & Websocket communication.
-	License        string              `json:"license"`            // The license file to use for the broker.
-	Limit		   *LimitConfig        `json:"limit,omitempty"`    // Configuration for various limits such as message size.
-	TLS            *cfg.TLSConfig      `json:"tls,omitempty"`      // The API port used for Secure TCP & Websocket communication.
-	Cluster        *ClusterConfig      `json:"cluster,omitempty"`  // The configuration for the clustering.
-	Storage        *cfg.ProviderConfig `json:"storage,omitempty"`  // The configuration for the storage provider.
-	Contract       *cfg.ProviderConfig `json:"contract,omitempty"` // The configuration for the contract provider.
-	Metering       *cfg.ProviderConfig `json:"metering,omitempty"` // The configuration for the usage storage for metering.
-	Logging        *cfg.ProviderConfig `json:"logging,omitempty"`  // The configuration for the logger.
-	Monitor        *cfg.ProviderConfig `json:"monitor,omitempty"`  // The configuration for the monitoring storage.
-	Vault          secretStoreConfig   `json:"vault,omitempty"`    // The configuration for the Hashicorp Vault Secret Store.
-	Dynamo         secretStoreConfig   `json:"dynamodb,omitempty"` // The configuration for the AWS DynamoDB Secret Store.
+	ListenAddr string              `json:"listen"`             // The API port used for TCP & Websocket communication.
+	License    string              `json:"license"`            // The license file to use for the broker.
+	Debug      bool                `json:"debug,omitempty"`    // The debug mode flag.
+	Limit      LimitConfig         `json:"limit,omitempty"`    // Configuration for various limits such as message size.
+	TLS        *cfg.TLSConfig      `json:"tls,omitempty"`      // The API port used for Secure TCP & Websocket communication.
+	Cluster    *ClusterConfig      `json:"cluster,omitempty"`  // The configuration for the clustering.
+	Storage    *cfg.ProviderConfig `json:"storage,omitempty"`  // The configuration for the storage provider.
+	Contract   *cfg.ProviderConfig `json:"contract,omitempty"` // The configuration for the contract provider.
+	Metering   *cfg.ProviderConfig `json:"metering,omitempty"` // The configuration for the usage storage for metering.
+	Logging    *cfg.ProviderConfig `json:"logging,omitempty"`  // The configuration for the logger.
+	Monitor    *cfg.ProviderConfig `json:"monitor,omitempty"`  // The configuration for the monitoring storage.
+	Vault      secretStoreConfig   `json:"vault,omitempty"`    // The configuration for the Hashicorp Vault Secret Store.
+	Dynamo     secretStoreConfig   `json:"dynamodb,omitempty"` // The configuration for the AWS DynamoDB Secret Store.
 
 	listenAddr *net.TCPAddr     // The listen address, parsed.
 	certCaches []cfg.CertCacher // The certificate caches configured.
 }
 
-
-func (c *Config) MaxMessageBytes() int64{
-	//return default if not configured
-	if c.Limit == nil || c.Limit.MessageSize <= 0{
+// MaxMessageBytes returns the configured max message size, must be smaller than 64K.
+func (c *Config) MaxMessageBytes() int64 {
+	if c.Limit.MessageSize <= 0 || c.Limit.MessageSize > maxMessageSize {
 		return maxMessageSize
 	}
 	return int64(c.Limit.MessageSize)
@@ -159,10 +158,19 @@ type ClusterConfig struct {
 	Passphrase string `json:"passphrase,omitempty"`
 }
 
-//Limit represent various limit configurations - such as message size.
-type LimitConfig struct{
-	//Maximum message size allowed from/to the peer. Default if not specified is 64kB.
+// LimitConfig represents various limit configurations - such as message size.
+type LimitConfig struct {
+
+	// Maximum message size allowed from/to the client. Default if not specified is 64kB.
 	MessageSize int `json:"messageSize,omitempty"`
+
+	// The maximum messages per second allowed to be processed per client connection. This
+	// effectively restricts the QpS for an individual connection.
+	ReadRate int `json:"readRate,omitempty"`
+
+	// The maximum socket write rate per connection. This does not limit QpS but instead
+	// can be used to scale throughput. Defaults to 60.
+	FlushRate int `json:"flushRate,omitempty"`
 }
 
 // LoadProvider loads a provider from the configuration or panics if the configuration is

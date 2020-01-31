@@ -1,3 +1,17 @@
+/**********************************************************************************
+* Copyright (c) 2009-2019 Misakai Ltd.
+* This program is free software: you can redistribute it and/or modify it under the
+* terms of the GNU Affero General Public License as published by the  Free Software
+* Foundation, either version 3 of the License, or(at your option) any later version.
+*
+* This program is distributed  in the hope that it  will be useful, but WITHOUT ANY
+* WARRANTY;  without even  the implied warranty of MERCHANTABILITY or FITNESS FOR A
+* PARTICULAR PURPOSE.  See the GNU Affero General Public License  for  more details.
+*
+* You should have  received a copy  of the  GNU Affero General Public License along
+* with this program. If not, see<http://www.gnu.org/licenses/>.
+************************************************************************************/
+
 package security
 
 import (
@@ -10,6 +24,19 @@ import (
 func TestKeyIsEmpty(t *testing.T) {
 	key := Key([]byte{})
 	assert.True(t, true, key.IsEmpty())
+}
+
+// BenchmarkValidateChannel-8   	10000000	       126 ns/op	      48 B/op	       1 allocs/op
+func BenchmarkValidateChannel(b *testing.B) {
+	key := Key(make([]byte, 24))
+	key.SetTarget("a/")
+	v := ParseChannel([]byte(string(key) + "a/b/c/d/"))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key.ValidateChannel(v)
+	}
 }
 
 func validateChannel(k Key, c string) bool {
@@ -111,6 +138,15 @@ func TestKey(t *testing.T) {
 
 	key.SetExpires(time.Unix(1497683272, 0).UTC())
 	assert.True(t, key.IsExpired())
+
+	assert.True(t, key.HasPermission(AllowRead))
+	assert.False(t, key.HasPermission(AllowExtend))
+
+	key.SetPermission(AllowExtend, true)
+	assert.True(t, key.HasPermission(AllowExtend))
+
+	key.SetPermission(AllowExtend, false)
+	assert.False(t, key.HasPermission(AllowExtend))
 
 	key.SetPermissions(AllowMaster)
 	assert.True(t, key.IsMaster())

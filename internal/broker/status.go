@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -15,6 +15,8 @@
 package broker
 
 import (
+	"sync/atomic"
+
 	"github.com/emitter-io/address"
 	"github.com/emitter-io/stats"
 )
@@ -46,7 +48,7 @@ func (s *sampler) Snapshot() (snapshot []byte) {
 	// Track node specific information
 	stat.Measure("node.id", int32(node))
 	stat.Measure("node.peers", int32(serv.NumPeers()))
-	stat.Measure("node.conns", int32(serv.connections))
+	stat.Measure("node.conns", int32(atomic.LoadInt64(&serv.connections)))
 	stat.Measure("node.subs", int32(serv.subscriptions.Count()))
 
 	// Add node tags

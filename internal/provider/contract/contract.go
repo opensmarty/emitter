@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -27,6 +27,7 @@ import (
 	"github.com/emitter-io/emitter/internal/provider/logging"
 	"github.com/emitter-io/emitter/internal/provider/usage"
 	"github.com/emitter-io/emitter/internal/security"
+	"github.com/emitter-io/emitter/internal/security/license"
 )
 
 // The contract's state possible values.
@@ -59,7 +60,7 @@ func (c *contract) Validate(key security.Key) bool {
 		c.State == ContractStateAllowed
 }
 
-// Gets the usage statistics.
+// Stats gets the usage statistics.
 func (c *contract) Stats() usage.Meter {
 	return c.stats
 }
@@ -117,15 +118,15 @@ type SingleContractProvider struct {
 }
 
 // NewSingleContractProvider creates a new single contract provider.
-func NewSingleContractProvider(license *security.License, metering usage.Metering) *SingleContractProvider {
+func NewSingleContractProvider(license license.License, metering usage.Metering) *SingleContractProvider {
 	p := new(SingleContractProvider)
 	p.owner = new(contract)
 	p.owner.MasterID = 1
-	p.owner.ID = license.Contract
-	p.owner.Signature = license.Signature
+	p.owner.ID = license.Contract()
+	p.owner.Signature = license.Signature()
 	p.owner.State = ContractStateAllowed
 	p.usage = metering
-	p.owner.stats = p.usage.Get(license.Contract).(usage.Meter)
+	p.owner.stats = p.usage.Get(license.Contract()).(usage.Meter)
 	return p
 }
 
@@ -170,12 +171,12 @@ type HTTPContractProvider struct {
 }
 
 // NewHTTPContractProvider creates a new single contract provider.
-func NewHTTPContractProvider(license *security.License, metering usage.Metering) *HTTPContractProvider {
+func NewHTTPContractProvider(license license.License, metering usage.Metering) *HTTPContractProvider {
 	p := HTTPContractProvider{}
 	p.owner = new(contract)
 	p.owner.MasterID = 1
-	p.owner.ID = license.Contract
-	p.owner.Signature = license.Signature
+	p.owner.ID = license.Contract()
+	p.owner.Signature = license.Signature()
 	p.cache = new(sync.Map)
 	p.usage = metering
 	return &p

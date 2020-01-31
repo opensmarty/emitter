@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -30,37 +30,6 @@ type response interface {
 
 // ------------------------------------------------------------------------------------
 
-// Error represents an event code which provides a more details.
-type Error struct {
-	Request uint16 `json:"req,omitempty"`
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-}
-
-// Error implements error interface.
-func (e *Error) Error() string { return e.Message }
-
-// ForRequest sets the request ID in the response for matching
-func (e *Error) ForRequest(id uint16) {
-	e.Request = id
-}
-
-// Represents a set of errors used in the handlers.
-var (
-	ErrBadRequest      = &Error{Status: 400, Message: "the request was invalid or cannot be otherwise served"}
-	ErrUnauthorized    = &Error{Status: 401, Message: "the security key provided is not authorized to perform this operation"}
-	ErrPaymentRequired = &Error{Status: 402, Message: "the request can not be served, as the payment is required to proceed"}
-	ErrForbidden       = &Error{Status: 403, Message: "the request is understood, but it has been refused or access is not allowed"}
-	ErrNotFound        = &Error{Status: 404, Message: "the resource requested does not exist"}
-	ErrServerError     = &Error{Status: 500, Message: "an unexpected condition was encountered and no more specific message is suitable"}
-	ErrNotImplemented  = &Error{Status: 501, Message: "the server either does not recognize the request method, or it lacks the ability to fulfill the request"}
-	ErrTargetInvalid   = &Error{Status: 400, Message: "channel should end with `/` for strict types or `/#/` for wildcards"}
-	ErrTargetTooLong   = &Error{Status: 400, Message: "channel can not have more than 23 parts"}
-	ErrLinkInvalid     = &Error{Status: 400, Message: "the link must be an alphanumeric string of 1 or 2 characters"}
-)
-
-// ------------------------------------------------------------------------------------
-
 type keyGenRequest struct {
 	Key     string `json:"key"`     // The master key to use.
 	Channel string `json:"channel"` // The channel to create a key for.
@@ -68,6 +37,7 @@ type keyGenRequest struct {
 	TTL     int32  `json:"ttl"`     // The TTL of the key.
 }
 
+// expires returns the requested expiration time
 func (m *keyGenRequest) expires() time.Time {
 	if m.TTL == 0 {
 		return time.Unix(0, 0)
@@ -76,9 +46,9 @@ func (m *keyGenRequest) expires() time.Time {
 	return time.Now().Add(time.Duration(m.TTL) * time.Second).UTC()
 }
 
+// access returns the requested level of access
 func (m *keyGenRequest) access() uint8 {
 	required := security.AllowNone
-
 	for i := 0; i < len(m.Type); i++ {
 		switch c := m.Type[i]; c {
 		case 'r':
@@ -122,7 +92,6 @@ type linkRequest struct {
 	Key       string `json:"key"`       // The key for the channel.
 	Channel   string `json:"channel"`   // The channel name for the shortcut.
 	Subscribe bool   `json:"subscribe"` // Specifies whether the broker should auto-subscribe.
-	Private   bool   `json:"private"`   // Specifies whether the broker should generate a private link.
 }
 
 // ------------------------------------------------------------------------------------

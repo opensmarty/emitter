@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -72,7 +72,7 @@ func (t *usage) AddDevice(addr string) {
 	t.Devices.Insert([]byte(addr))
 }
 
-// Returns the estimated number of devices.
+// DeviceCount returns the estimated number of devices.
 func (t *usage) DeviceCount() int {
 	t.Lock.Lock()
 	defer t.Lock.Unlock()

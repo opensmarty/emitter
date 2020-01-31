@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -16,14 +16,10 @@ package storage
 
 import (
 	"context"
-	enc "encoding/binary"
-	"io"
 	"os"
 	"time"
 
 	"github.com/dgraph-io/badger"
-	"github.com/dgraph-io/badger/protos"
-	"github.com/dgraph-io/badger/y"
 	"github.com/emitter-io/emitter/internal/async"
 	"github.com/emitter-io/emitter/internal/message"
 	"github.com/emitter-io/emitter/internal/provider/logging"
@@ -71,9 +67,7 @@ func (s *SSD) Configure(config map[string]interface{}) error {
 	}
 
 	// Create the options
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = opts.Dir
+	opts := badger.DefaultOptions(dir)
 	opts.SyncWrites = false
 	opts.Truncate = true
 
@@ -118,13 +112,11 @@ func (s *SSD) storeFrame(msgs message.Frame) error {
 func encodeFrame(msgs message.Frame) []*badger.Entry {
 	entries := make([]*badger.Entry, 0, len(msgs))
 	for _, m := range msgs {
-		if val, err := binary.Marshal(m); err == nil {
-			entries = append(entries, &badger.Entry{
-				Key:       m.ID,
-				Value:     val,
-				ExpiresAt: uint64(m.Expires().Unix()),
-			})
-		}
+		entries = append(entries, &badger.Entry{
+			Key:       m.ID,
+			Value:     m.Encode(),
+			ExpiresAt: uint64(m.Expires().Unix()),
+		})
 	}
 	return entries
 }
@@ -221,70 +213,16 @@ func (s *SSD) Close() error {
 }
 
 // LoadMessage loads the message from badger item.
-func loadMessage(item *badger.Item) (msg message.Message, err error) {
-	var data []byte
-	if data, err = item.ValueCopy(nil); err == nil {
-		err = binary.Unmarshal(data, &msg)
+func loadMessage(item *badger.Item) (message.Message, error) {
+	data, err := item.ValueCopy(nil)
+	if err != nil {
+		return message.Message{}, err
 	}
-	return
-}
 
-// Restore loads a previous snapshot
-func (s *SSD) Restore(reader io.Reader) error {
-	logging.LogAction("ssd", "reading from snapshot")
-	return s.db.Load(reader)
+	return message.DecodeMessage(data)
 }
 
 // GC runs the garbage collection on the storage
 func (s *SSD) GC() {
 	s.db.RunValueLogGC(0.50)
-}
-
-// Backup creates a snaphshot of the store.
-func (s *SSD) Backup(writer io.Writer) error {
-
-	// Run GC before backing up
-	s.GC()
-
-	// This is a copy of badger backup except it doesn't write any
-	// deleted or expired items in the snapshot.
-	logging.LogAction("ssd", "writing a snapshot")
-	return s.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			valCopy, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-
-			entry := &protos.KVPair{
-				Key:       y.Copy(item.Key()),
-				Value:     valCopy,
-				UserMeta:  []byte{item.UserMeta()},
-				Version:   item.Version(),
-				ExpiresAt: item.ExpiresAt(),
-			}
-
-			// Write entries to disk
-			if err := writeTo(entry, writer); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func writeTo(entry *protos.KVPair, w io.Writer) error {
-	if err := enc.Write(w, binary.LittleEndian, uint64(entry.Size())); err != nil {
-		return err
-	}
-	buf, err := entry.Marshal()
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(buf)
-	return err
 }

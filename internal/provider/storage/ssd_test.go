@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -14,7 +14,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io/ioutil"
@@ -88,6 +87,12 @@ func TestSSD_QueryOrdered(t *testing.T) {
 func TestSSD_QueryRetained(t *testing.T) {
 	runSSDTest(func(store *SSD) {
 		testRetained(t, store)
+	})
+}
+
+func TestSSD_QueryRange(t *testing.T) {
+	runSSDTest(func(store *SSD) {
+		testRange(t, store)
 	})
 }
 
@@ -319,21 +324,4 @@ func benchmarkQuery(b *testing.B, store *SSD, last int, m *stats.Metric) {
 	}()
 
 	time.Sleep(5 * time.Second)
-}
-
-func TestBackup(t *testing.T) {
-	runSSDTest(func(store *SSD) {
-		err := store.storeFrame(getNTestMessages(10))
-		assert.NoError(t, err)
-
-		// Do the backup
-		buffer := bytes.NewBuffer(nil)
-		err = store.Backup(buffer)
-		assert.NoError(t, err)
-
-		// Restore the backup
-		reader := bytes.NewReader(buffer.Bytes())
-		err = store.Restore(reader)
-		assert.NoError(t, err)
-	})
 }

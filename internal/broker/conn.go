@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -25,13 +25,18 @@ import (
 	"time"
 
 	"github.com/emitter-io/address"
+	"github.com/emitter-io/emitter/internal/broker/keygen"
+	"github.com/emitter-io/emitter/internal/errors"
 	"github.com/emitter-io/emitter/internal/message"
 	"github.com/emitter-io/emitter/internal/network/mqtt"
 	"github.com/emitter-io/emitter/internal/provider/contract"
 	"github.com/emitter-io/emitter/internal/provider/logging"
 	"github.com/emitter-io/emitter/internal/security"
 	"github.com/emitter-io/stats"
+	"github.com/kelindar/rate"
 )
+
+const defaultReadRate = 100000
 
 // Conn represents an incoming connection.
 type Conn struct {
@@ -45,10 +50,12 @@ type Conn struct {
 	subs     *message.Counters // The subscriptions for this connection.
 	measurer stats.Measurer    // The measurer to use for monitoring.
 	links    map[string]string // The map of all pre-authorized links.
+	limit    *rate.Limiter     // The read rate limiter.
+	keys     *keygen.Provider  // The key generation provider.
 }
 
 // NewConn creates a new connection.
-func (s *Service) newConn(t net.Conn) *Conn {
+func (s *Service) newConn(t net.Conn, readRate int) *Conn {
 	c := &Conn{
 		tracked:  0,
 		luid:     security.NewID(),
@@ -57,11 +64,16 @@ func (s *Service) newConn(t net.Conn) *Conn {
 		subs:     message.NewCounters(),
 		measurer: s.measurer,
 		links:    map[string]string{},
+		keys:     s.Keygen,
 	}
 
 	// Generate a globally unique id as well
 	c.guid = c.luid.Unique(uint64(address.GetHardware()), "emitter")
-	logging.LogTarget("conn", "created", c.guid)
+	if readRate == 0 {
+		readRate = defaultReadRate
+	}
+
+	c.limit = rate.New(readRate, time.Second)
 
 	// Increment the connection counter
 	atomic.AddInt64(&s.connections, 1)
@@ -103,13 +115,17 @@ func (c *Conn) track(contract contract.Contract) {
 func (c *Conn) Process() error {
 	defer c.Close()
 	reader := bufio.NewReaderSize(c.socket, 65536)
-	maxMessageSize := c.service.Config.MaxMessageBytes()
+	maxSize := c.service.Config.MaxMessageBytes()
 	for {
 		// Set read/write deadlines so we can close dangling connections
 		c.socket.SetDeadline(time.Now().Add(time.Second * 120))
+		if c.limit.Limit() {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 
 		// Decode an incoming MQTT packet
-		msg, err := mqtt.DecodePacket(reader, maxMessageSize)
+		msg, err := mqtt.DecodePacket(reader, maxSize)
 		if err != nil {
 			return err
 		}
@@ -214,27 +230,26 @@ func (c *Conn) onReceive(msg mqtt.Message) error {
 func (c *Conn) Send(m *message.Message) (err error) {
 	defer c.MeasureElapsed("send.pub", time.Now())
 	packet := mqtt.Publish{
-		Header:  &mqtt.StaticHeader{QOS: 0},
+		Header:  mqtt.Header{QOS: 0},
 		Topic:   m.Channel, // The channel for this message.
 		Payload: m.Payload, // The payload for this message.
 	}
 
-	// Acknowledge the publication
 	_, err = packet.EncodeTo(c.socket)
 	return
 }
 
 // notifyError notifies the connection about an error
-func (c *Conn) notifyError(err *Error, requestID uint16) {
+func (c *Conn) notifyError(err *errors.Error, requestID uint16) {
 	c.sendResponse("emitter/error/", err, requestID)
 }
 
 func (c *Conn) sendResponse(topic string, resp response, requestID uint16) {
 	switch m := resp.(type) {
-	case *Error:
-		errCopy := *m // Copy the value
-		errCopy.ForRequest(requestID)
-		resp = &errCopy
+	case *errors.Error:
+		cpy := m.Copy()
+		cpy.ForRequest(requestID)
+		resp = cpy
 	default:
 		m.ForRequest(requestID)
 	}
@@ -295,6 +310,6 @@ func (c *Conn) Close() error {
 
 	// Close the transport and decrement the connection counter
 	atomic.AddInt64(&c.service.connections, -1)
-	logging.LogTarget("conn", "closed", c.guid)
+	//logging.LogTarget("conn", "closed", c.guid)
 	return c.socket.Close()
 }

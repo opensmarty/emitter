@@ -1,8 +1,24 @@
+/**********************************************************************************
+* Copyright (c) 2009-2019 Misakai Ltd.
+* This program is free software: you can redistribute it and/or modify it under the
+* terms of the GNU Affero General Public License as published by the  Free Software
+* Foundation, either version 3 of the License, or(at your option) any later version.
+*
+* This program is distributed  in the hope that it  will be useful, but WITHOUT ANY
+* WARRANTY;  without even  the implied warranty of MERCHANTABILITY or FITNESS FOR A
+* PARTICULAR PURPOSE.  See the GNU Affero General Public License  for  more details.
+*
+* You should have  received a copy  of the  GNU Affero General Public License along
+* with this program. If not, see<http://www.gnu.org/licenses/>.
+************************************************************************************/
+
 package broker
 
 import (
 	"testing"
 
+	"github.com/emitter-io/emitter/internal/broker/keygen"
+	"github.com/emitter-io/emitter/internal/errors"
 	"github.com/emitter-io/emitter/internal/message"
 	netmock "github.com/emitter-io/emitter/internal/network/mock"
 	"github.com/emitter-io/emitter/internal/network/mqtt"
@@ -10,6 +26,7 @@ import (
 	secmock "github.com/emitter-io/emitter/internal/provider/contract/mock"
 	"github.com/emitter-io/emitter/internal/provider/usage"
 	"github.com/emitter-io/emitter/internal/security"
+	"github.com/emitter-io/emitter/internal/security/license"
 	"github.com/emitter-io/stats"
 	"github.com/kelindar/binary"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +40,7 @@ func TestHandlers_onLink(t *testing.T) {
 		success bool
 	}{
 		{
-			packet:  `{ "name": "AB", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "private": true, "subscribe": true }`,
+			packet:  `{ "name": "AB", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "subscribe": true }`,
 			channel: "a/b/c/",
 			success: true,
 		},
@@ -32,11 +49,15 @@ func TestHandlers_onLink(t *testing.T) {
 			channel: "a/b/c/",
 			success: true,
 		},
-		{packet: `{ "name": "ABC", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "private": true, "subscribe": true }`},
-		{packet: `{ "name": "", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "private": true, "subscribe": true }`},
-		{packet: `{"key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "private": true, "subscribe": true }`},
-		{packet: `{ "name": "AB", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "---", "private": true, "subscribe": true }`},
-		{packet: `{ "name": "AB", "key": "xxx", "channel": "a/b/c/", "private": true, "subscribe": true }`},
+		{
+			packet:  `{ "name": "AB", "key": "xxx", "channel": "a/b/c/", "subscribe": true }`,
+			channel: "a/b/c/",
+			success: true,
+		},
+		{packet: `{ "name": "ABC", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "subscribe": true }`},
+		{packet: `{ "name": "", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/", "subscribe": true }`},
+		{packet: `{"key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "a/b/c/",  "subscribe": true }`},
+		{packet: `{ "name": "AB", "key": "k44Ss59ZSxg6Zyz39kLwN-2t5AETnGpm", "channel": "---", "subscribe": true }`},
 	}
 
 	for _, tc := range tests {
@@ -45,17 +66,18 @@ func TestHandlers_onLink(t *testing.T) {
 			contract := new(secmock.Contract)
 			contract.On("Validate", mock.Anything).Return(true)
 			provider.On("Get", mock.Anything).Return(contract, true)
-			license, _ := security.ParseLicense(testLicense)
+			license, _ := license.Parse(testLicense)
+			cipher, _ := license.Cipher()
 			s := &Service{
 				contracts:     provider,
 				subscriptions: message.NewTrie(),
 				License:       license,
 				presence:      make(chan *presenceNotify, 100),
+				Keygen:        keygen.NewProvider(cipher, provider),
 			}
 
-			s.Cipher, _ = s.License.Cipher()
 			conn := netmock.NewConn()
-			nc := s.newConn(conn.Client)
+			nc := s.newConn(conn.Client, 0)
 
 			resp, ok := nc.onLink([]byte(tc.packet))
 			assert.Equal(t, tc.success, ok)
@@ -67,14 +89,14 @@ func TestHandlers_onLink(t *testing.T) {
 }
 
 func TestHandlers_onMe(t *testing.T) {
-	license, _ := security.ParseLicense(testLicense)
+	license, _ := license.Parse(testLicense)
 	s := &Service{
 		subscriptions: message.NewTrie(),
 		License:       license,
 	}
 
 	conn := netmock.NewConn()
-	nc := s.newConn(conn.Client)
+	nc := s.newConn(conn.Client, 0)
 	nc.links["0"] = "key/a/b/c/"
 	resp, success := nc.onMe()
 	meResp := resp.(*meResponse)
@@ -86,7 +108,7 @@ func TestHandlers_onMe(t *testing.T) {
 }
 
 func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
-	license, _ := security.ParseLicense(testLicense)
+	license, _ := license.Parse(testLicense)
 	tests := []struct {
 		channel       string
 		subCount      int
@@ -100,9 +122,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			subCount:      1,
-			subErr:        (*Error)(nil),
+			subErr:        (*errors.Error)(nil),
 			unsubCount:    0,
-			unsubErr:      (*Error)(nil),
+			unsubErr:      (*errors.Error)(nil),
 			contractValid: true,
 			contractFound: true,
 			msg:           "Successful case",
@@ -110,9 +132,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a+q/b/c/",
 			subCount:      0,
-			subErr:        ErrBadRequest,
+			subErr:        errors.ErrBadRequest,
 			unsubCount:    0,
-			unsubErr:      ErrBadRequest,
+			unsubErr:      errors.ErrBadRequest,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Invalid channel case",
@@ -129,9 +151,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBZRqJDby30mT/a/b/c/",
 			subCount:      0,
-			subErr:        ErrUnauthorized,
+			subErr:        errors.ErrUnauthorized,
 			unsubCount:    0,
-			unsubErr:      ErrUnauthorized,
+			unsubErr:      errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Expired key case",
@@ -139,9 +161,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			subCount:      0,
-			subErr:        ErrUnauthorized,
+			subErr:        errors.ErrUnauthorized,
 			unsubCount:    0,
-			unsubErr:      ErrUnauthorized,
+			unsubErr:      errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: false,
 			msg:           "Contract not found case",
@@ -149,9 +171,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			subCount:      0,
-			subErr:        ErrUnauthorized,
+			subErr:        errors.ErrUnauthorized,
 			unsubCount:    0,
-			unsubErr:      ErrUnauthorized,
+			unsubErr:      errors.ErrUnauthorized,
 			contractValid: false,
 			contractFound: true,
 			msg:           "Contract is invalid case",
@@ -167,9 +189,9 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBZHmCtcvoHGQ/a/b/c/",
 			subCount:      0,
-			subErr:        ErrUnauthorized,
+			subErr:        errors.ErrUnauthorized,
 			unsubCount:    0,
-			unsubErr:      ErrUnauthorized,
+			unsubErr:      errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Wrong target case",
@@ -185,16 +207,17 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 			provider := secmock.NewContractProvider()
 			provider.On("Get", mock.Anything).Return(contract, tc.contractFound)
 
+			cipher, _ := license.Cipher()
 			s := &Service{
 				contracts:     provider,
 				subscriptions: message.NewTrie(),
 				License:       license,
 				presence:      make(chan *presenceNotify, 100),
+				Keygen:        keygen.NewProvider(cipher, provider),
 			}
 
 			conn := netmock.NewConn()
-			nc := s.newConn(conn.Client)
-			s.Cipher, _ = s.License.Cipher()
+			nc := s.newConn(conn.Client, 0)
 
 			// Subscribe and check for error.
 			subErr := nc.onSubscribe([]byte(tc.channel))
@@ -202,7 +225,7 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 
 			// Search for the ssid.
 			channel := security.ParseChannel([]byte(tc.channel))
-			key, _ := s.Cipher.DecryptKey(channel.Key)
+			key, _ := cipher.DecryptKey(channel.Key)
 			ssid := message.NewSsid(key.Contract(), channel.Query)
 			subscribers := s.subscriptions.Lookup(ssid, nil)
 			assert.Equal(t, tc.subCount, len(subscribers))
@@ -219,7 +242,7 @@ func TestHandlers_onSubscribeUnsubscribe(t *testing.T) {
 }
 
 func TestHandlers_onPublish(t *testing.T) {
-	license, _ := security.ParseLicense(testLicense)
+	license, _ := license.Parse(testLicense)
 	tests := []struct {
 		channel       string
 		payload       string
@@ -231,7 +254,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			payload:       "test",
-			err:           (*Error)(nil),
+			err:           (*errors.Error)(nil),
 			contractValid: true,
 			contractFound: true,
 			msg:           "Successful case",
@@ -239,7 +262,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a+q/b/c/",
 			payload:       "test",
-			err:           ErrBadRequest,
+			err:           errors.ErrBadRequest,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Invalid channel case",
@@ -247,7 +270,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/+/b/c/",
 			payload:       "test",
-			err:           ErrForbidden,
+			err:           errors.ErrForbidden,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Channel is not static case",
@@ -255,7 +278,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBZRqJDby30mT/a/b/c/",
 			payload:       "test",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Expired key case",
@@ -263,7 +286,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			payload:       "test",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: false,
 			msg:           "Contract not found case",
@@ -271,7 +294,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			payload:       "test",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: false,
 			contractFound: true,
 			msg:           "Contract is invalid case",
@@ -279,7 +302,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoJzie4_C4yvupug6cLLlWO/a/b/c/",
 			payload:       "test",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: true,
 			msg:           "No write permission case",
@@ -287,7 +310,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBZHmCtcvoHGQ/a/b/c/",
 			payload:       "test",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: true,
 			contractFound: true,
 			msg:           "Wrong target case",
@@ -295,7 +318,7 @@ func TestHandlers_onPublish(t *testing.T) {
 		{
 			channel:       "0Nq8SWbL8qoOKEDqh_ebBepug6cLLlWO/a/b/c/",
 			payload:       "test",
-			err:           (*Error)(nil),
+			err:           (*errors.Error)(nil),
 			contractValid: true,
 			contractFound: true,
 			msg:           "No store permission case",
@@ -311,18 +334,18 @@ func TestHandlers_onPublish(t *testing.T) {
 		provider := secmock.NewContractProvider()
 		provider.On("Get", mock.Anything).Return(contract, tc.contractFound)
 
+		cipher, _ := license.Cipher()
 		s := &Service{
 			contracts:     provider,
 			subscriptions: message.NewTrie(),
 			License:       license,
+			Keygen:        keygen.NewProvider(cipher, provider),
 		}
 
 		conn := netmock.NewConn()
-		nc := s.newConn(conn.Client)
-		s.Cipher, _ = s.License.Cipher()
+		nc := s.newConn(conn.Client, 0)
 
 		err := nc.onPublish(&mqtt.Publish{
-			Header:  new(mqtt.StaticHeader),
 			Topic:   []byte(tc.channel),
 			Payload: []byte(tc.payload),
 		})
@@ -335,7 +358,7 @@ func TestHandlers_onPresence(t *testing.T) {
 	// TODO :
 	// - valid key for the right channel, but no presence right.
 	// - test Who
-	license, _ := security.ParseLicense(testLicense)
+	license, _ := license.Parse(testLicense)
 	tests := []struct {
 		channel       string
 		payload       string
@@ -359,7 +382,7 @@ func TestHandlers_onPresence(t *testing.T) {
 		{
 			channel:       "emitter/presence/",
 			payload:       "",
-			err:           ErrBadRequest,
+			err:           errors.ErrBadRequest,
 			success:       false,
 			contractValid: true,
 			contractFound: true,
@@ -371,7 +394,7 @@ func TestHandlers_onPresence(t *testing.T) {
 			contractValid: true,
 			contractFound: true,
 			success:       false,
-			err:           ErrBadRequest,
+			err:           errors.ErrBadRequest,
 			msg:           "Invalid channel case",
 		},
 		{
@@ -380,13 +403,13 @@ func TestHandlers_onPresence(t *testing.T) {
 			contractValid: true,
 			contractFound: true,
 			success:       false,
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			msg:           "Key for wrong channel case",
 		},
 		{
 			channel:       "emitter/presence/",
 			payload:       "{\"key\":\"VfW_Cv5wWVZPHgCvLwJAuU2bgRFKXQEY\",\"channel\":\"a+b\",\"status\":true}",
-			err:           ErrNotFound,
+			err:           errors.ErrNotFound,
 			contractValid: true,
 			contractFound: false,
 			msg:           "Contract not found case",
@@ -394,7 +417,7 @@ func TestHandlers_onPresence(t *testing.T) {
 		{
 			channel:       "emitter/presence/",
 			payload:       "{\"key\":\"VfW_Cv5wWVZPHgCvLwJAuU2bgRFKXQEY\",\"channel\":\"a+b\",\"status\":true}",
-			err:           ErrUnauthorized,
+			err:           errors.ErrUnauthorized,
 			contractValid: false,
 			contractFound: true,
 			msg:           "Contract is invalid case",
@@ -410,15 +433,16 @@ func TestHandlers_onPresence(t *testing.T) {
 		provider := secmock.NewContractProvider()
 		provider.On("Get", mock.Anything).Return(contract, tc.contractFound)
 
+		cipher, _ := license.Cipher()
 		s := &Service{
 			contracts:     provider,
 			subscriptions: message.NewTrie(),
 			License:       license,
+			Keygen:        keygen.NewProvider(cipher, provider),
 		}
 
 		conn := netmock.NewConn()
-		nc := s.newConn(conn.Client)
-		s.Cipher, _ = s.License.Cipher()
+		nc := s.newConn(conn.Client, 0)
 
 		resp, success := nc.onPresence([]byte(tc.payload))
 
@@ -430,7 +454,7 @@ func TestHandlers_onPresence(t *testing.T) {
 }
 
 func TestHandlers_onKeygen(t *testing.T) {
-	license, _ := security.ParseLicense("N7XxQbUEPxJ_RIj4muLUdLGYtR1kdKe2AAAAAAAAAAI")
+	license, _ := license.Parse("N7XxQbUEPxJ_RIj4muLUdLGYtR1kdKe2AAAAAAAAAAI")
 	tests := []struct {
 		payload       string
 		contractValid bool
@@ -444,7 +468,7 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contractValid: true,
 			contractFound: true,
 			generated:     false,
-			resp:          ErrBadRequest,
+			resp:          errors.ErrBadRequest,
 			msg:           "Invalid request case",
 		},
 		{
@@ -452,7 +476,7 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contractValid: true,
 			contractFound: true,
 			generated:     false,
-			resp:          ErrUnauthorized,
+			resp:          errors.ErrUnauthorized,
 			msg:           "No keygen permission case (not a master key)",
 		},
 		{
@@ -460,7 +484,7 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contractValid: true,
 			contractFound: false,
 			generated:     false,
-			resp:          ErrNotFound,
+			resp:          errors.ErrNotFound,
 			msg:           "Contract not found case",
 		},
 		{
@@ -468,7 +492,7 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contractValid: false,
 			contractFound: true,
 			generated:     false,
-			resp:          ErrUnauthorized,
+			resp:          errors.ErrUnauthorized,
 			msg:           "Contract not valid case",
 		},
 		{
@@ -476,7 +500,7 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contractValid: true,
 			contractFound: true,
 			generated:     false,
-			resp:          ErrTargetInvalid,
+			resp:          errors.ErrTargetInvalid,
 			msg:           "Target invalid case",
 		},
 		{
@@ -497,22 +521,23 @@ func TestHandlers_onKeygen(t *testing.T) {
 			contract.On("Validate", mock.Anything).Return(tc.contractValid)
 			contract.On("Stats").Return(usage.NewMeter(0))
 			provider.On("Get", mock.Anything).Return(contract, tc.contractFound)
+			cipher, _ := license.Cipher()
 			s := &Service{
 				contracts:     provider,
 				subscriptions: message.NewTrie(),
 				License:       license,
+				Keygen:        keygen.NewProvider(cipher, provider),
 			}
 
 			conn := netmock.NewConn()
-			nc := s.newConn(conn.Client)
-			s.Cipher, _ = s.License.Cipher()
+			nc := s.newConn(conn.Client, 0)
 
 			//resp
 			resp, generated := nc.onKeyGen([]byte(tc.payload))
 			assert.Equal(t, tc.generated, generated, tc.msg)
 
 			if !generated {
-				keyGenResp := resp.(*Error)
+				keyGenResp := resp.(*errors.Error)
 				assert.Equal(t, tc.resp, keyGenResp)
 			} else {
 				keyGenResp := resp.(*keyGenResponse)
@@ -576,7 +601,7 @@ func TestHandlers_onEmitterRequest(t *testing.T) {
 				measurer:      stats.NewNoop(),
 			}
 
-			nc := s.newConn(netmock.NewNoop())
+			nc := s.newConn(netmock.NewNoop(), 0)
 			ok := nc.onEmitterRequest(channel, []byte(tc.payload), 0)
 			assert.Equal(t, tc.success, ok, tc.channel)
 		})
@@ -626,7 +651,7 @@ func TestHandlers_lookupPresence(t *testing.T) {
 		measurer:      stats.NewNoop(),
 	}
 
-	s.subscriptions.Subscribe(message.Ssid{1, 2, 3}, s.newConn(netmock.NewNoop()))
+	s.subscriptions.Subscribe(message.Ssid{1, 2, 3}, s.newConn(netmock.NewNoop(), 0))
 	presence := s.lookupPresence(message.Ssid{1, 2, 3})
 	assert.NotEmpty(t, presence)
 }

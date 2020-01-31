@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2018 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -55,7 +55,7 @@ func (s *Self) Name() string {
 func (s *Self) Configure(config map[string]interface{}) error {
 
 	// Get the interval from the provider configuration
-	interval := defaultInterval
+	interval := time.Second
 	if v, ok := config["interval"]; ok {
 		if i, ok := v.(float64); ok {
 			interval = time.Duration(i) * time.Millisecond

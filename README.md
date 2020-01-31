@@ -6,18 +6,26 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/emitter-io/emitter)](https://goreportcard.com/report/github.com/emitter-io/emitter)
 [![Twitter Follow](https://img.shields.io/twitter/follow/emitter_io.svg?style=social&label=Follow)](https://twitter.com/emitter_io)
 
-# Emitter: Clustered Publish-Subscribe Broker
-> [Emitter is a free open source real-time messaging service](https://emitter.io) that connects all devices. This publish-subscribe messaging API is built for speed and security.
+# Emitter: Distributed Publish-Subscribe Platform
 
-Emitter is a real-time communication service for connecting online devices. Infrastructure and APIs for IoT, gaming, apps and real-time web. At its core, emitter.io is a distributed, scalable and fault-tolerant publish-subscribe messaging platform based on MQTT protocol and featuring message storage.
+Emitter is a distributed, scalable and fault-tolerant publish-subscribe  platform built with MQTT protocol and featuring message storage, security, monitoring and more:
+* **Publish/Subscribe** using MQTT over TCP or Websockets.
+* Resilient, **highly available and partition tolerant** (AP in CAP terms).
+* Able to handle **3+ million of messages/sec** on a single broker.
+* Supports **message storage** with history and **message-level expiry**.
+* Provides **secure channel keys** with permissions and can face the internet.
+* Automatic **TLS/SSL** and encrypted inter-broker communication.
+* Built-in **monitoring with Prometheus, StatsD** and more.
+* **Shared subscriptions, links** and private links for channels.
+* Easy **deployment with Docker and Kubernetes** of production-ready clusters.
 
 Emitter can be used for online gaming and mobile apps by satisfying the requirements for low latency, binary messaging and high throughput. It can also be used for the real-time web application such as dashboards or visual analytics or chat systems. Moreover, Emitter is perfect for the internet of things and allows sensors to be controlled and data gathered and analyzed.
 
 ## Tutorials & Demos
 
-The following [set of videos](https://www.youtube.com/playlist?list=PLhFXrq-2gEb0ygxR477GJLngjYu-FcSVq) demonstrates various features of Emitter broker in action.
+The following [video tutorials](https://www.youtube.com/playlist?list=PLhFXrq-2gEb0ygxR477GJLngjYu-FcSVq) demonstrate various features of Emitter in action.
 
-[![FOSDEM 2018](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-fosdem2017.png)](https://www.youtube.com/watch?v=M8VhWckhZoM)
+[![FOSDEM 2018](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-fosdem2018.png)](https://www.youtube.com/watch?v=M8VhWckhZoM)
 [![FOSDEM 2019](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-fosdem2019.png)](https://www.youtube.com/watch?v=GZDgN8XHy7g)
 [![PubSub in Go](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-golang.png)](https://www.youtube.com/watch?v=ggFqj5P4W38)
 [![Message Storage](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-storage.png)](https://www.youtube.com/watch?v=14cIxnR0Akc)
@@ -27,6 +35,11 @@ The following [set of videos](https://www.youtube.com/playlist?list=PLhFXrq-2gEb
 [![Monitor with eTop](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-etop.png)](https://www.youtube.com/watch?v=EOlOk9JPSyA)
 [![StatsD and DataDog](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-datadog.png)](https://www.youtube.com/watch?v=bi77Wb7cqEc)
 [![Links & Private Links](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-links.png)](https://www.youtube.com/watch?v=_FgKiUlEb_s)
+[![Building a Client-Server app with Publish-Subscribe in Go](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-golang.png)](https://www.youtube.com/watch?v=SHPkJ6ESnpw)
+[![Distributed Actor Model with Publish/Subscribe and Golang](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-actor.png)](https://www.youtube.com/watch?v=nWPKlopWOss)
+[![Online Multiplayer Platformer Game with Emitter](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-platformer.png)](https://www.youtube.com/watch?v=UIzMTyfLq7Y)
+[![Keeping one Last Message per Channel using MQTT Retain](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-retain.png)](https://www.youtube.com/watch?v=w3BXfYqYAvg)
+[![Load-balance Messages using Subscriber Groups](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-share.png)](https://www.youtube.com/watch?v=Vl7iGKEQrTg)
 
 ## How to Deploy
 [![Local Emitter Cluster](https://s3.amazonaws.com/cdn.misakai.com/www-emitter/thumb/emitter-win.png)](https://www.youtube.com/watch?v=byq70fHeH-I)
@@ -39,7 +52,7 @@ The following [set of videos](https://www.youtube.com/playlist?list=PLhFXrq-2gEb
 The quick way to start an Emitter broker is by using `docker run` command as shown below. 
 
 ```shell
-docker run -d --name emitter -p 8080:8080 --privileged --restart=unless-stopped emitter/server
+docker run -d --name emitter -p 8080:8080 --restart=unless-stopped emitter/server
 ```
 
 Alternatively, you might compile this repository and use `go get` command to rebuild and run from source. 
@@ -60,10 +73,6 @@ This message shows that a new security configuration was generated, you can then
 
 Finally, open a browser and navigate to **<http://127.0.0.1:8080/keygen>** in order to generate your key. Now you can use the secret key generated to create channel keys, which allow you to secure individual channels and start using emitter.
 
-
-## Sandbox
-
-Emitter has a [sandbox](https://emitter.io/login) - a free cloud cluster which allows you to quickly try out the platform and see how simple it is to create connected, real-time applications. The movie below shows you how to create your sandbox account and create a simple hello-world application within **5 minutes**.
 
 ## Usage Example
 
@@ -193,6 +202,6 @@ If you'd like to contribute, please fork the repository and use a feature branch
 
 ## Licensing
 
-Copyright (c) 2009-2017 Misakai Ltd. This project is licensed under [Affero General Public License v3](https://github.com/emitter-io/emitter/blob/master/LICENSE).
+Copyright (c) 2009-2019 Misakai Ltd. This project is licensed under [Affero General Public License v3](https://github.com/emitter-io/emitter/blob/master/LICENSE).
 
 Emitter offers support contracts and is now also offered via a commercial license. Please contact info@emitter.io for more information.

@@ -1,5 +1,5 @@
 /**********************************************************************************
-* Copyright (c) 2009-2017 Misakai Ltd.
+* Copyright (c) 2009-2019 Misakai Ltd.
 * This program is free software: you can redistribute it and/or modify it under the
 * terms of the GNU Affero General Public License as published by the  Free Software
 * Foundation, either version 3 of the License, or(at your option) any later version.
@@ -16,25 +16,33 @@ package security
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/emitter-io/emitter/internal/security/hash"
 )
 
+// Gets the beginning of time for the timestamp, which is 2010/1/1 00:00:00
+const timeOffset = int64(1262304000)
+
+// The beginning of time...
+var timeZero = time.Unix(0, 0)
+
 // Access types for a security key.
 const (
-	AllowNone      = uint8(0)               // Key has no privileges.
-	AllowMaster    = uint8(1 << 0)          // Key should be allowed to generate other keys.
-	AllowRead      = uint8(1 << 1)          // Key should be allowed to subscribe to the target channel.
-	AllowWrite     = uint8(1 << 2)          // Key should be allowed to publish to the target channel.
-	AllowStore     = uint8(1 << 3)          // Key should be allowed to write to the message history of the target channel.
-	AllowLoad      = uint8(1 << 4)          // Key should be allowed to write to read the message history of the target channel.
-	AllowPresence  = uint8(1 << 5)          // Key should be allowed to query the presence on the target channel.
-	AllowExtend    = uint8(1 << 6)          // Key should be allowed to create sub-channels by extending an existing one.
-	AllowExecute   = uint8(1 << 7)          // Key should be allowed to execute code. (RESERVED)
-	AllowReadWrite = AllowRead | AllowWrite // Key should be allowed to read and write to the target channel.
-	AllowStoreLoad = AllowStore | AllowLoad // Key should be allowed to read and write the message history.
+	AllowNone      = uint8(0)                     // Key has no privileges.
+	AllowMaster    = uint8(1 << 0)                // Key should be allowed to generate other keys.
+	AllowRead      = uint8(1 << 1)                // Key should be allowed to subscribe to the target channel.
+	AllowWrite     = uint8(1 << 2)                // Key should be allowed to publish to the target channel.
+	AllowStore     = uint8(1 << 3)                // Key should be allowed to write to the message history of the target channel.
+	AllowLoad      = uint8(1 << 4)                // Key should be allowed to write to read the message history of the target channel.
+	AllowPresence  = uint8(1 << 5)                // Key should be allowed to query the presence on the target channel.
+	AllowExtend    = uint8(1 << 6)                // Key should be allowed to create sub-channels by extending an existing one.
+	AllowExecute   = uint8(1 << 7)                // Key should be allowed to execute code. (RESERVED)
+	AllowReadWrite = AllowRead | AllowWrite       // Key should be allowed to read and write to the target channel.
+	AllowStoreLoad = AllowStore | AllowLoad       // Key should be allowed to read and write the message history.
+	AllowAll       = math.MaxUint8 &^ AllowMaster // Key allows everything except master
 )
 
 // Key errors
@@ -111,6 +119,10 @@ func (k Key) SetPermissions(value uint8) {
 
 // ValidateChannel validates the channel string.
 func (k Key) ValidateChannel(ch *Channel) bool {
+	topic := ch.Channel
+	if len(topic) == 0 {
+		return false
+	}
 
 	// Bytes 16-17-18-19 contains target hash
 	target := uint32(k[16])<<24 | uint32(k[17])<<16 | uint32(k[18])<<8 | uint32(k[19])
@@ -124,8 +136,13 @@ func (k Key) ValidateChannel(ch *Channel) bool {
 		return target == ch.Target()
 	}
 
-	channel := string(ch.Channel)
-	channel = strings.TrimRight(channel, "/")
+	// Trim right `/`
+	if topic[len(topic)-1] == '/' {
+		topic = topic[:len(topic)-1]
+	}
+
+	// Split by `/`
+	channel := binaryToString(&topic)
 	parts := strings.Split(channel, "/")
 	wc := parts[len(parts)-1] == "#"
 	if wc {
@@ -164,7 +181,7 @@ func (k Key) ValidateChannel(ch *Channel) bool {
 
 	newChannel := strings.Join(parts[0:maxDepth], "/")
 
-	h := hash.Of([]byte(newChannel))
+	h := hash.OfString(newChannel)
 	return h == target
 }
 
@@ -200,7 +217,7 @@ func (k Key) SetTarget(channel string) error {
 
 	// Create a new channel and get the hash for this channel
 	newChannel := strings.Join(parts, "/")
-	value := hash.Of([]byte(newChannel))
+	value := hash.OfString(newChannel)
 
 	// Set the bit path
 	k[12] = byte(bitPath >> 16)
@@ -256,4 +273,13 @@ func (k Key) IsMaster() bool {
 func (k Key) HasPermission(flag uint8) bool {
 	p := k.Permissions()
 	return (p & flag) == flag
+}
+
+// SetPermission sets a permission to a value
+func (k Key) SetPermission(flag uint8, value bool) {
+	if value {
+		k.SetPermissions(k.Permissions() | flag)
+	} else {
+		k.SetPermissions(k.Permissions() &^ flag)
+	}
 }
